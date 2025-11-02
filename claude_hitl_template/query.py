@@ -15,6 +15,7 @@ import ray
 import fastapi
 from kodosumi.core import Launch, ServeAPI, InputsError, Tracer
 from kodosumi.core import forms as F
+from kodosumi import dtypes
 from ray import serve
 from datetime import datetime
 from .agent import create_actor, get_actor, cleanup_actor
@@ -55,6 +56,85 @@ prompt_form = F.Model(
 )
 
 
+@app.lock("claude-input")
+async def claude_conversation_lock(data: dict):
+    """
+    Lock handler for Claude conversation HITL.
+    Shows Claude's messages and response form to user.
+
+    Args:
+        data: Context data including:
+            - messages: List of message dicts from Claude
+            - status: "ready" or "complete"
+            - iteration: Current iteration count
+
+    Returns:
+        Form model with Claude's messages and user input field
+    """
+    # Extract data
+    messages = data.get("messages", [])
+    status = data.get("status", "ready")
+    iteration = data.get("iteration", 0)
+
+    # Build markdown content with Claude's messages
+    content = "## Claude's Response\n\n"
+
+    for msg in messages:
+        if msg["type"] == "text":
+            content += f"{msg['content']}\n\n"
+        elif msg["type"] == "tool":
+            content += f"🔧 *{msg['content']}*\n\n"
+
+    # Add status indicator if task is complete
+    if status == "complete":
+        content += "*Claude has finished responding. You can continue the conversation or type 'done' to end.*\n\n"
+
+    # Add instructions
+    content += "---\n\n### What would you like to do?\n\n"
+    content += "You can:\n"
+    content += "- Provide more input to continue the conversation\n"
+    content += "- Type 'done', 'exit', or 'quit' to end the conversation\n"
+    content += "- Click \"End Conversation\" to stop\n"
+
+    return F.Model(
+        F.Markdown(content),
+        F.InputArea(
+            label="Your Response",
+            name="response",
+            placeholder="Type your response or 'done' to finish...",
+            required=False,
+            rows=3
+        ),
+        F.Submit("Send"),
+        F.Action(name="action", value="end_conversation", text="End Conversation")
+    )
+
+
+@app.lease("claude-input")
+async def claude_conversation_lease(inputs: dict):
+    """
+    Lease handler for Claude conversation HITL.
+    Processes user's response from the lock form.
+
+    Args:
+        inputs: User inputs from the form
+
+    Returns:
+        Dict with response text and cancellation status
+    """
+    # Check if user clicked "End Conversation" button
+    action = inputs.get("action", "").strip()
+    if action == "end_conversation":
+        return {"cancelled": True}
+
+    # Otherwise return user's response
+    response_text = inputs.get("response", "").strip()
+    return {
+        "response": response_text,
+        "cancelled": False
+    }
+
+
 @app.enter(
     path="/",
     model=prompt_form,
@@ -84,7 +164,9 @@ async def enter(request: fastapi.Request, inputs: dict):
         raise error
 
     # Launch async conversation execution
-    return Launch(request, run_conversation, {
+    # IMPORTANT: Use module path string (not function reference) so Kodosumi
+    # imports the module in execution context, registering lock/lease handlers
+    return Launch(request, "claude_hitl_template.query:run_conversation", inputs={
         "prompt": prompt,
         "timestamp": datetime.now().isoformat()
     })
@@ -155,63 +237,38 @@ Initializing Claude Agent SDK...
                     # Check timeout
                     is_timeout = await actor.check_timeout.remote()
                     if is_timeout:
-                        await tracer.markdown("\n⏱️ **Session timed out (11 minutes idle)**\n")
-                        break
+                        summary = _build_conversation_summary(iteration, "⏱️ Session timed out (11 minutes idle)")
+                        return dtypes.Markdown(body=summary)
 
-                    # Display Claude's messages
-                    for msg in result["messages"]:
-                        if msg["type"] == "text":
-                            await tracer.markdown(f"\n**Claude:** {msg['content']}\n")
-                        elif msg["type"] == "tool":
-                            await tracer.markdown(f"\n🔧 *{msg['content']}*\n")
+                    # Note: result["status"] == "complete" just means this turn is done,
+                    # NOT that the conversation should end. Continue to HITL loop to let
+                    # user decide whether to respond or end conversation.
 
-                    # Check if complete
-                    if result["status"] == "complete":
-                        await tracer.markdown("\n✓ **Task completed**\n")
-                        await _show_conversation_summary(tracer, iteration)
-                        break
-
-                    # HITL pause - get user input
-                    user_input = await tracer.lease(
+                    # HITL pause - Pass Claude's messages to lock handler to display in form
+                    user_input = await tracer.lock(
                         "claude-input",
-                        F.Model(
-                            F.Markdown("""
-### Continue Conversation?
-
-You can:
-- Provide more input to continue the conversation
-- Type 'done', 'exit', or 'quit' to end the conversation
-- Click "End Conversation" to stop
-                            """),
-                            F.InputArea(
-                                label="Your Response",
-                                name="response",
-                                placeholder="Type your response or 'done' to finish...",
-                                rows=3
-                            ),
-                            F.Submit("Send"),
-                            F.Cancel("End Conversation")
-                        )
+                        {
+                            "iteration": iteration,
+                            "messages": result["messages"],
+                            "status": result["status"]
+                        }
                     )
 
                     # Check for cancellation
                     if not user_input or user_input.get("cancelled"):
-                        await tracer.markdown("\n⏹️ **Conversation ended by user**\n")
-                        await _show_conversation_summary(tracer, iteration)
-                        break
+                        summary = _build_conversation_summary(iteration, "⏹️ Conversation ended by user")
+                        return dtypes.Markdown(body=summary)
 
                     response_text = user_input.get("response", "").strip()
 
                     # Check for termination keywords
                     if response_text.lower() in ["done", "exit", "quit", "stop"]:
-                        await tracer.markdown("\n✓ **Conversation completed**\n")
-                        await _show_conversation_summary(tracer, iteration)
-                        break
+                        summary = _build_conversation_summary(iteration, "✓ Conversation completed successfully")
+                        return dtypes.Markdown(body=summary)
 
                     if not response_text:
-                        await tracer.markdown("\n⚠️ **Empty response - ending conversation**\n")
-                        await _show_conversation_summary(tracer, iteration)
-                        break
+                        summary = _build_conversation_summary(iteration, "⚠️ Empty response - conversation ended")
+                        return dtypes.Markdown(body=summary)
 
                     # Send to Claude
                     await tracer.markdown(f"\n**You:** {response_text}\n\n*Waiting for Claude's response...*\n")
@@ -219,10 +276,10 @@ You can:
 
                 # Max iterations check
                 if iteration >= MAX_MESSAGE_ITERATIONS:
-                    await tracer.markdown(f"\n⚠️ **Maximum iteration limit reached ({MAX_MESSAGE_ITERATIONS})**\n")
-                    await _show_conversation_summary(tracer, iteration)
+                    summary = _build_conversation_summary(iteration, f"⚠️ Maximum iteration limit reached ({MAX_MESSAGE_ITERATIONS})")
+                    return dtypes.Markdown(body=summary)
 
-                # Success - exit retry loop
+                # Success - exit retry loop (this should be unreachable now)
                 break
 
             except ray.exceptions.RayActorError as e:
@@ -238,45 +295,47 @@ You can:
                     except:
                         pass
                 else:
-                    await tracer.markdown("\n❌ **Session failed after retries**\n")
-                    raise
+                    summary = _build_conversation_summary(0, "❌ Session failed after retries")
+                    return dtypes.Markdown(body=summary)
+
+        # If we reach here, conversation loop exited normally
+        # This should not happen with current logic but handle it gracefully
+        summary = _build_conversation_summary(iteration, "✓ Conversation completed")
+        return dtypes.Markdown(body=summary)
 
     except Exception as e:
-        await tracer.markdown(f"""
-## Error
-
-An error occurred during conversation:
-
-```
-{str(e)}
-```
-
-Please check your Claude Code CLI installation and authentication.
-        """)
-        raise
+        # Handle any errors with proper completion
+        summary = _build_conversation_summary(0, f"❌ Error: {str(e)[:100]}")
+        return dtypes.Markdown(body=summary)
 
     finally:
         # Always cleanup actor
         await cleanup_actor(execution_id)
 
 
-async def _show_conversation_summary(tracer: Tracer, iterations: int):
+def _build_conversation_summary(iterations: int, reason: str) -> str:
     """
-    Display a summary of the conversation.
+    Build a markdown summary of the conversation.
 
     Args:
-        tracer: Kodosumi tracer for output
         iterations: Number of conversation iterations
+        reason: Reason for conversation ending
+
+    Returns:
+        Formatted markdown string
     """
-    await tracer.markdown(f"""
+    return f"""---
+
+## Conversation Complete
+
+**Status:** {reason}
+**Total Interactions:** {iterations}
+**Ended at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
 ---
 
-## Conversation Summary
-
-**Total Iterations:** {iterations}
-
-*Conversation ended at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
-    """)
+Thank you for using Claude HITL Template!
+"""
 
 
 # Ray Serve deployment wrapper for Kodosumi ServeAPI
