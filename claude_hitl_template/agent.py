@@ -55,9 +55,24 @@ class ClaudeSessionActor:
             cwd: Working directory for Claude SDK (default: current dir)
             permission_mode: Claude permission mode ("acceptEdits" or "plan")
         """
+        # Check if running in container
+        # In container, HOME is set to /app/template_user by Dockerfile ENV
+        is_containerized = os.getenv("HOME") == "/app/template_user"
+
+        if is_containerized:
+            # In container: Enable setting_sources to merge .claude folders
+            # - "user" → /app/template_user/.claude/ (baked into image)
+            # - "project" → .claude/ in deployed code directory
+            # - "local" → .claude/settings.local.json (if exists)
+            setting_sources = ["user", "project", "local"]
+        else:
+            # Native execution: Don't load filesystem settings to avoid mixing with personal ~/.claude/
+            setting_sources = None
+
         self.options = ClaudeAgentOptions(
             permission_mode=permission_mode,
-            cwd=cwd or os.getcwd()
+            cwd=cwd or os.getcwd(),
+            setting_sources=setting_sources
         )
         self.client: Optional[ClaudeSDKClient] = None
         self.connected = False
@@ -250,7 +265,7 @@ class ClaudeSessionActor:
 
 # Helper functions for actor management
 
-def create_actor(execution_id: str, cwd: Optional[str] = None) -> ray.actor.ActorHandle:
+def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: bool = False) -> ray.actor.ActorHandle:
     """
     Create a new ClaudeSessionActor with unique name.
 
@@ -258,24 +273,54 @@ def create_actor(execution_id: str, cwd: Optional[str] = None) -> ray.actor.Acto
     - Named: "claude-session-{execution_id}" for retrieval
     - Detached lifetime: Survives driver crashes
     - No auto-restart: Subprocess can't be recovered
-    - Resource allocation: 1 CPU, 512MB memory
+    - Resource allocation: 1 CPU, 1GB memory
+    - Optional: Container runtime for .claude/ folder isolation
 
     Args:
         execution_id: Unique identifier for this conversation
         cwd: Working directory for Claude SDK (default: current dir)
+        use_container: If True, run actor in container with isolated .claude folders
+                      (requires Docker/Podman image: claude-hitl-worker:latest)
 
     Returns:
         Ray actor handle
     """
+    from ray.runtime_env import RuntimeEnv
+
     actor_name = f"claude-session-{execution_id}"
+
+    # Get project root
+    project_root = cwd or os.getcwd()
+
+    # Build runtime environment
+    if use_container:
+        # Container isolation for .claude/ folders:
+        # - template_user/.claude/ is baked into the image (generic template behavior)
+        # - project .claude/ comes from the deployed code directory
+        # Ray's image_uri can only be used with env_vars (no 'container' field or volume mounts)
+        runtime_env = RuntimeEnv(
+            image_uri="claude-hitl-worker:latest",
+            env_vars={
+                "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
+                # HOME is set to /app/template_user in Dockerfile
+                # This makes "user" settings load from template_user/.claude/
+            }
+        )
+        # Ray will deploy code to container, actor runs in that context
+        actor_cwd = None  # Let Ray handle cwd
+    else:
+        # Native execution (no container)
+        runtime_env = None
+        actor_cwd = project_root
 
     return ClaudeSessionActor.options(
         name=actor_name,
+        runtime_env=runtime_env,
         lifetime="detached",       # Survives driver crashes
         max_restarts=0,             # Don't auto-restart (subprocess can't recover)
         num_cpus=1,                 # 1 CPU for actor + subprocess
         memory=1024 * 1024 * 1024   # 1GB (recommended by Claude SDK docs)
-    ).remote(cwd=cwd)
+    ).remote(cwd=actor_cwd)
 
 
 def get_actor(execution_id: str) -> Optional[ray.actor.ActorHandle]:
