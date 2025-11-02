@@ -37,3 +37,7 @@ ray_tmp/
 # Environment
 .env
 .env.local
+*.env
+
+# Kodosumi config with secrets (only commit .example files)
+data/config/claude_hitl_template.yaml

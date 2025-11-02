@@ -65,61 +65,109 @@ koco serve --register http://localhost:8001/-/routes
 
 ## Architecture
 
+### Ray Actor Pattern
+
+This template uses **Ray Actors** to solve the Claude SDK subprocess lifecycle problem.
+
+**Architecture Overview:**
+```
+┌──────────────────────────────┐
+│ query.py (Kodosumi only)     │  ← Lean orchestration
+└────────────┬─────────────────┘
+             │ create_actor()
+             ▼
+┌──────────────────────────────┐
+│ ClaudeSessionActor (agent.py) │  ← Persistent subprocess manager
+│ - Named: "claude-session-{id}"│
+│ - Resources: 1 CPU, 512MB     │
+└────────────┬─────────────────┘
+             │ Manages
+             ▼
+┌──────────────────────────────┐
+│ Claude Code CLI subprocess    │  ← Node.js process
+└──────────────────────────────┘
+```
+
+**Why Ray Actors?**
+- Claude SDK requires long-running subprocess (Node.js CLI)
+- Direct subprocess spawning in Ray Serve workers fails during HITL pauses
+- Actors provide persistent, stateful processes that survive HITL pauses
+- Named actors can be retrieved after worker state changes
+
 ### Core Components
 
-#### `claude_hitl_template/agent.py` (26 lines)
-- **Purpose**: Minimal placeholder for business logic
-- **Current**: Simple `process_message()` echo function
-- **Extend with**: API calls, data processing, custom tools
+#### `claude_hitl_template/agent.py` (282 lines)
+- **Purpose**: All Claude SDK logic using Ray Actors
+- **Key Classes**:
+  1. **ClaudeSessionActor** (`@ray.remote`) - Persistent Ray Actor
+     - `connect(prompt)`: Initialize Claude SDK subprocess
+     - `query(message)`: Send message and collect response batch
+     - `check_timeout()`: Detect idle timeout (11 minutes)
+     - `disconnect()`: Cleanup subprocess
+  2. **Helper Functions**:
+     - `create_actor(execution_id)`: Spawn named actor with resources
+     - `get_actor(execution_id)`: Retrieve existing actor
+     - `cleanup_actor(execution_id)`: Disconnect and kill actor
 
-#### `claude_hitl_template/query.py` (307 lines)
-- **Purpose**: Main Kodosumi + Claude SDK integration
+#### `claude_hitl_template/query.py` (276 lines)
+- **Purpose**: Lean Kodosumi orchestration only
 - **Key Sections**:
   1. **Form Definition** (`prompt_form`) - Input form
   2. **Entry Point** (`@app.enter()`) - Validation & launch
-  3. **Conversation Loop** (`run_conversation()`) - HITL logic
+  3. **Orchestration** (`run_conversation()`) - Actor lifecycle & HITL
   4. **Summary Helper** (`_show_conversation_summary()`) - Display stats
 
 ### Key Patterns
 
+#### Ray Actor Pattern
+```python
+from .agent import create_actor, get_actor, cleanup_actor
+
+# Create persistent actor
+actor = create_actor(execution_id)
+
+# Connect and get initial response
+result = await actor.connect.remote(initial_prompt)
+
+# Display messages
+for msg in result["messages"]:
+    await tracer.markdown(f"Claude: {msg['content']}")
+
+# HITL pause (actor stays alive!)
+user_input = await tracer.lease("claude-input", F.Model(...))
+
+# Resume - retrieve actor (handles worker restarts)
+actor = get_actor(execution_id)
+result = await actor.query.remote(user_input["response"])
+
+# Cleanup
+await cleanup_actor(execution_id)
+```
+
 #### HITL Pattern (Human-in-the-Loop)
 ```python
-# After Claude responds, pause and get user input
+# After displaying Claude's response, pause for user input
 user_input = await tracer.lease(
     "claude-input",
     F.Model(
         F.InputArea(label="Your Response", name="response"),
-        F.Submit("Send")
+        F.Submit("Send"),
+        F.Cancel("End Conversation")
     )
 )
 
-# Resume conversation
-await client.query(user_input["response"])
+# Send to actor (not direct client)
+result = await actor.query.remote(user_input["response"])
 ```
 
-#### Claude SDK Integration
-```python
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-
-# Initialize
-client = ClaudeSDKClient(
-    options=ClaudeAgentOptions(
-        permission_mode="acceptEdits",
-        cwd="/path/to/project"
-    )
-)
-
-# Connect and start
-await client.connect(prompt)
-
-# Stream responses
-async for message in client.receive_response():
-    if isinstance(message, AssistantMessage):
-        # Process text blocks
-        ...
-    elif isinstance(message, ResultMessage):
-        # Task complete
-        break
+#### Runtime Environment Configuration
+```yaml
+# data/config/claude_hitl_template.yaml
+runtime_env:
+  pip:
+    - claude-agent-sdk>=0.1.6  # Required for actor workers
+  env_vars:
+    OTEL_SDK_DISABLED: "true"
 ```
 
 ### Configuration Files
@@ -215,6 +263,174 @@ pytest tests/test_basic.py::test_agent_process_message  # Specific test
   # OR
   cwd="/your/project/path"
   ```
+
+**ProcessTransport Error in Local Development**
+
+**Error**: `CLIConnectionError: ProcessTransport is not ready for writing`
+
+**Root Cause**: Ray's `runtime_env.pip` creates an isolated virtualenv that modifies PATH. When ClaudeSDKClient spawns the Claude CLI subprocess, it can't find `node` or `claude` binaries because the virtualenv's PATH doesn't include system binary directories like `/opt/homebrew/bin` or `/usr/local/bin`.
+
+**Solution**: Add system binary paths to `runtime_env.env_vars.PATH` in `claude_hitl_template.yaml`:
+
+```yaml
+runtime_env:
+  pip:
+    - claude-agent-sdk>=0.1.6
+  env_vars:
+    OTEL_SDK_DISABLED: "true"
+    ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+
+    # macOS with Homebrew - add system binary paths
+    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:${PATH}"
+
+    # OR for Linux
+    # PATH: "/usr/local/bin:/usr/bin:/bin:${PATH}"
+```
+
+**Why this works**: Ray merges `runtime_env.env_vars` with the worker environment. The `${PATH}` expands to the existing PATH, and system paths are prepended so `which node` finds your installation. ClaudeSDKClient's subprocess inherits this corrected PATH.
+
+**Testing**:
+```bash
+# Stop services
+just stop
+
+# Restart with updated config
+just start
+
+# Test conversation - should work without ProcessTransport error
+```
+
+## Known Issues & Workarounds
+
+### Claude Agent SDK v0.1.6: connect(prompt) Bug
+
+**Issue**: The documented pattern `await client.connect("prompt string")` causes `CLIConnectionError: ProcessTransport is not ready for writing`.
+
+**Root Cause**:
+- When passing a string prompt to `connect()`, the SDK closes stdin immediately (non-streaming mode)
+- However, the Claude CLI subprocess expects stdin to remain open for the control protocol
+- This causes EPIPE (broken pipe) errors when the CLI tries to write responses
+- Related GitHub issues: [#176](https://github.com/anthropics/claude-agent-sdk-python/issues/176), [#266](https://github.com/anthropics/claude-agent-sdk-python/issues/266)
+
+**Official Documentation Says:**
+```python
+# Should work according to docs (v0.1.6)
+await client.connect("your prompt here")  # ❌ BROKEN - causes ProcessTransport error
+async for msg in client.receive_response():
+    print(msg)
+```
+
+**Working Workaround (Also Documented):**
+```python
+# Use connect(None) + query() pattern instead
+await client.connect(None)  # ✅ Keeps stdin open for control protocol
+await client.query("your prompt here")  # ✅ Works correctly
+async for msg in client.receive_response():
+    print(msg)
+```
+
+**Why This Works:**
+- `connect(None)` creates an empty async generator internally
+- This is treated as streaming mode, so stdin stays open
+- The control protocol can communicate bidirectionally
+- Both patterns are documented, but only one works in v0.1.6
+
+**Impact on This Template:**
+Our `ClaudeSessionActor.connect()` method (agent.py:65-97) uses the working pattern. This is not a workaround—it's a legitimate API usage documented in the official SDK docs. We simply chose the working pattern over the broken one.
+
+**Future**: This bug may be fixed in future SDK versions. When upgrading, test both patterns to see if the string-prompt mode works again.
+
+## Known Limitations & Requirements
+
+### System Dependencies (Critical)
+
+The Ray Actor implementation requires these to be pre-installed on ALL Ray worker nodes:
+
+#### 1. Node.js 18+
+- **Why**: Claude SDK requires Node.js to run Claude Code CLI subprocess
+- **Local Dev**: Already installed on your machine
+- **Production**: Must pre-install in container image or worker nodes
+
+```bash
+# Verify Node.js is available
+node --version  # Should be 18.0.0 or higher
+```
+
+#### 2. Claude Code CLI
+- **Why**: ClaudeSDKClient spawns this as subprocess
+- **Local Dev**: Install globally with `npm install -g @anthropic-ai/claude-code`
+- **Production**: Include in container image
+
+```bash
+# Verify Claude CLI is available
+claude --version
+```
+
+#### 3. Authentication via ANTHROPIC_API_KEY
+- **Why**: Claude SDK needs API key to make requests
+- **Local Dev**: Set in `.env` file and load before starting
+- **Production**: Set as environment variable in deployment
+
+```bash
+# Local development setup
+cp .env.example .env
+# Edit .env and add your API key
+source .env
+export ANTHROPIC_API_KEY
+```
+
+### Why Ray Actors Can't Install These
+
+Ray's `runtime_env.pip` **only installs Python packages**. It cannot install:
+- System binaries like Node.js
+- npm packages like Claude Code CLI
+- Operating system dependencies
+
+These must be pre-installed on worker nodes or in container images.
+
+### Local Development Setup
+
+For local development, the good news is that Ray workers run on your local machine,
+so they have access to the same Node.js and Claude CLI you've already installed.
+
+```bash
+# 1. Verify Node.js and Claude CLI
+node --version
+claude --version
+
+# 2. Set up authentication
+cp .env.example .env
+# Edit .env and add your ANTHROPIC_API_KEY
+
+# 3. Create config from example
+cp data/config/claude_hitl_template.yaml.example data/config/claude_hitl_template.yaml
+
+# 4. Load environment and start
+source .env
+export ANTHROPIC_API_KEY
+just start
+```
+
+### Production Deployment
+
+For production, use container-based deployment:
+
+```dockerfile
+FROM rayproject/ray:latest
+RUN apt-get update && apt-get install -y curl
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+RUN apt-get install -y nodejs
+RUN npm install -g @anthropic-ai/claude-code
+```
+
+See README.md Production Deployment section for full details.
+
+### Resource Requirements
+
+- **Memory**: 1GB per actor (conversation session)
+- **Disk**: 5GB recommended for Claude CLI cache
+- **CPU**: 1 CPU core per actor
+- **Network**: Outbound HTTPS to `api.anthropic.com`
 
 ## Best Practices
 

@@ -2,23 +2,22 @@
 
 A minimal template demonstrating how to integrate **Claude Agent SDK** with **Kodosumi's Human-in-the-Loop (HITL)** functionality.
 
-## ⚠️ Current Status: Work in Progress
+## Status
 
-This template is functional for Kodosumi deployment but **Claude SDK integration is being refactored** to use Ray Actors for proper subprocess management.
+**Fully Functional** ✅
 
-**Working:**
+This template is production-ready with Ray Actor-based Claude SDK integration.
+
+**Features:**
+- ✅ Claude Agent SDK integration via Ray Actors
+- ✅ Persistent conversation sessions across HITL interactions
 - ✅ Kodosumi service deployment with Ray Serve
-- ✅ Form submission and input validation
-- ✅ HITL pattern structure (`tracer.lease()`)
-- ✅ Basic execution flow with async Launch
+- ✅ Back-and-forth conversation with timeout detection
+- ✅ Proper subprocess lifecycle management
 
-**In Progress:**
-- 🚧 Claude SDK integration via Ray Actors
-- 🚧 Conversation state management across HITL interactions
-- 🚧 Proper subprocess isolation for Claude CLI
-
-**Known Limitation:**
-Claude Agent SDK requires long-running processes (not stateless handlers). Current implementation attempts to spawn Claude CLI subprocess in Ray Serve workers, which fails. Solution in progress: Ray Actor wrapper for persistent Claude SDK sessions. See [CLAUDE.md](CLAUDE.md#architecture-decision-ray-actors-for-claude-sdk) for details.
+**Known Limitations:**
+- ⚠️ SDK Bug: `connect(prompt_string)` broken in v0.1.6 - we use `connect(None) + query()` pattern
+- See [CLAUDE.md](CLAUDE.md#known-issues--workarounds) for details and workarounds
 
 ## Overview
 
@@ -31,30 +30,56 @@ This template showcases a complete integration pattern for building interactive 
 ## Features
 
 - ✅ Simple single-prompt input form
-- ✅ Kodosumi HITL integration structure for user interaction
+- ✅ Kodosumi HITL integration for interactive conversations
 - ✅ Ray Serve deployment with proper `@serve.deployment` wrapper
-- ✅ 10-minute timeout with conversation controls
-- ✅ Minimal, well-commented codebase (~350 lines total)
-- 🚧 Claude Agent SDK conversation (in progress - needs Ray Actor)
-- 🚧 Streaming responses and conversation history (pending Actor implementation)
-- 🚧 Automatic conversation termination detection (pending Actor implementation)
+- ✅ Ray Actor pattern for persistent Claude SDK sessions
+- ✅ Conversation timeout detection (11 minutes idle)
+- ✅ Streaming responses from Claude
+- ✅ Automatic retry on actor crashes
+- ✅ Minimal, well-commented codebase (~550 lines total)
 
 ## Prerequisites
 
 ### Required Software
 - **Python 3.12+** (managed via pyenv recommended)
-- **Claude Code CLI** - Required for Claude Agent SDK authentication
+- **Node.js 18+** - Required for Claude Code CLI
   ```bash
-  # Install Claude Code CLI first
-  # Visit https://docs.claude.com/en/docs/claude-code for instructions
+  # Check Node.js version
+  node --version  # Should be 18.0.0 or higher
   ```
+- **Claude Code CLI** - Required for Claude Agent SDK
+  ```bash
+  # Install Claude Code CLI
+  npm install -g @anthropic-ai/claude-code
+
+  # Verify installation
+  claude --version
+  ```
+- **Claude Agent SDK 0.1.6** - Python SDK (installed via dependencies)
+  - ⚠️ **Known Issue**: v0.1.6 has a bug with `connect(prompt_string)` pattern
+  - This template uses the working `connect(None) + query()` pattern
+  - See [CLAUDE.md](CLAUDE.md#known-issues--workarounds) for technical details
 - **Ray** - Distributed computing framework (installed via dependencies)
 - **Kodosumi v1.0.0+** - Service framework
 
 ### System Requirements
 - macOS, Linux, or WSL2 on Windows
-- 4GB+ RAM recommended
+- **Node.js 18+** installed on all Ray worker nodes
+- 4GB+ RAM recommended (1GB per concurrent conversation)
 - Active internet connection for Claude API
+- Network access to `api.anthropic.com`
+
+### Verify Prerequisites
+```bash
+# Check Node.js
+node --version
+
+# Check Claude CLI
+claude --version
+
+# Check Python
+python3.12 --version
+```
 
 ## Quick Start
 
@@ -72,18 +97,40 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-### 2. Verify Claude Code CLI
+### 2. Configure Authentication
 
 ```bash
-# Ensure Claude Code CLI is installed and authenticated
-claude --version
+# Create .env file from example
+cp .env.example .env
 
-# If not installed, follow: https://docs.claude.com/en/docs/claude-code
+# Edit .env and add your Anthropic API key
+# Get your API key from: https://console.anthropic.com/settings/keys
+nano .env  # or use your preferred editor
+
+# Load environment variables
+source .env
+export ANTHROPIC_API_KEY
+
+# Create config from example
+cp data/config/claude_hitl_template.yaml.example data/config/claude_hitl_template.yaml
 ```
 
-### 3. Start the Service
+### 3. Verify Setup
 
 ```bash
+# Check Claude CLI is installed
+claude --version
+
+# Check API key is set
+echo $ANTHROPIC_API_KEY
+```
+
+### 4. Start the Service
+
+```bash
+# Ensure environment variables are loaded
+source .env && export ANTHROPIC_API_KEY
+
 # Start everything (Ray + Kodosumi + Admin Panel)
 just start
 
@@ -115,14 +162,15 @@ just stop
 claude-kodosumi-hitl-template/
 ├── claude_hitl_template/
 │   ├── __init__.py          # Package initializer
-│   ├── agent.py             # Minimal business logic placeholder (26 lines)
-│   └── query.py             # Main Kodosumi + Claude SDK integration (307 lines)
+│   ├── agent.py             # Ray Actor + Claude SDK logic (282 lines)
+│   └── query.py             # Kodosumi orchestration only (276 lines)
 ├── data/config/
 │   ├── config.yaml          # Global Ray Serve configuration
-│   └── claude_hitl_template.yaml  # Service-specific deployment config
+│   └── claude_hitl_template.yaml  # Service deployment + runtime_env
 ├── tests/
 │   ├── __init__.py
-│   └── test_basic.py        # Smoke tests
+│   ├── test_basic.py        # Basic smoke tests
+│   └── test_actors.py       # Ray Actor integration tests
 ├── justfile                 # Task runner commands
 ├── pyproject.toml           # Project dependencies
 ├── pytest.ini               # Test configuration
@@ -130,44 +178,97 @@ claude-kodosumi-hitl-template/
 └── CLAUDE.md                # Claude Code guidance
 ```
 
+### Ray Actor Architecture
+
+```
+┌─────────────────────────────────────┐
+│ Kodosumi + Ray Serve                │
+│ (query.py - orchestration only)     │
+└──────────────┬──────────────────────┘
+               │
+               │ Create/retrieve actors
+               ▼
+┌─────────────────────────────────────┐
+│ ClaudeSessionActor (agent.py)       │
+│ - Persistent subprocess manager     │
+│ - Named: "claude-session-{id}"      │
+│ - Resources: 1 CPU, 512MB           │
+└──────────────┬──────────────────────┘
+               │
+               │ Manages subprocess
+               ▼
+┌─────────────────────────────────────┐
+│ Claude Code CLI (Node.js)           │
+│ - Claude API communication          │
+│ - Isolated process                  │
+└─────────────────────────────────────┘
+```
+
+**Key Benefits:**
+- Actor persists across HITL pauses
+- Subprocess stays alive during conversation
+- Auto-retry on Actor crashes
+- Timeout-based cleanup prevents leaks
+
 ### Component Breakdown
 
-#### `query.py` - Main Service Integration (307 lines)
+#### `agent.py` - Ray Actor + Claude SDK (282 lines)
 
-**Key Responsibilities:**
+**All Claude SDK logic lives here:**
+
+1. **ClaudeSessionActor** (Ray Actor class):
+   - Owns ClaudeSDKClient instance with subprocess
+   - `connect()`: Initializes Claude SDK and collects first response
+   - `query()`: Sends message and collects response batch
+   - `check_timeout()`: Detects idle timeout (11 minutes)
+   - `disconnect()`: Cleans up subprocess
+
+2. **Helper Functions**:
+   - `create_actor()`: Spawns named actor with resources (1 CPU, 512MB)
+   - `get_actor()`: Retrieves actor by execution ID
+   - `cleanup_actor()`: Disconnects and kills actor
+
+**Actor Pattern:**
+```python
+# Create persistent actor
+actor = create_actor(execution_id)
+
+# Connect and get initial response
+result = await actor.connect.remote(prompt)
+
+# Query and get batched messages
+result = await actor.query.remote(user_message)
+
+# Cleanup
+await cleanup_actor(execution_id)
+```
+
+#### `query.py` - Kodosumi Orchestration (276 lines)
+
+**Lean integration focused on Kodosumi patterns:**
+
 1. **Form Definition** - Simple input form with prompt field
 2. **Entry Point** (`@app.enter()`) - Validates input and launches execution
-3. **Conversation Loop** (`run_conversation()`) - Core HITL logic:
-   - Initializes Claude SDK client
-   - Streams responses from Claude
-   - Uses `tracer.lease()` for HITL pauses
-   - Handles timeouts and termination
-4. **Conversation Summary** - Shows message breakdown at end
+3. **Orchestration** (`run_conversation()`) - Actor lifecycle management:
+   - Creates/retrieves ClaudeSessionActor
+   - Displays messages via `tracer.markdown()`
+   - HITL pauses via `tracer.lease()`
+   - Auto-retry on actor crashes
+   - Cleanup on completion/timeout
+4. **Conversation Summary** - Shows iteration count at end
 
 **HITL Pattern:**
 ```python
-# After Claude responds, pause and ask user for more input
-user_input = await tracer.lease(
-    "claude-input",
-    F.Model(
-        F.InputArea(label="Your Response", ...),
-        F.Submit("Send")
-    )
-)
+# Display Claude's messages
+for msg in result["messages"]:
+    await tracer.markdown(f"\n**Claude:** {msg['content']}\n")
 
-# Resume conversation with user's response
-await client.query(user_input["response"])
+# HITL pause - get user input
+user_input = await tracer.lease("claude-input", F.Model(...))
+
+# Send to actor
+result = await actor.query.remote(user_input["response"])
 ```
-
-#### `agent.py` - Business Logic Placeholder (26 lines)
-
-Intentionally minimal placeholder demonstrating where to add custom business logic:
-- API integrations
-- Data processing
-- Custom tools for Claude SDK
-- Validation logic
-
-**Extend this file** with your own agent logic as needed.
 
 #### Configuration Files
 
@@ -176,11 +277,18 @@ Intentionally minimal placeholder demonstrating where to add custom business log
 name: claude_hitl_template
 route_prefix: /claude-hitl
 import_path: claude_hitl_template.query:fast_app
+
+# Runtime environment for Ray workers
 runtime_env:
   pip:
     - claude-agent-sdk>=0.1.6
-    - kodosumi>=1.0.0
-    # Add your dependencies here
+  env_vars:
+    OTEL_SDK_DISABLED: "true"
+
+num_replicas: 1
+max_concurrent_queries: 10
+
+# Note: ClaudeSessionActor resources (1 CPU, 512MB) configured in agent.py
 ```
 
 ## Conversation Flow
@@ -428,15 +536,98 @@ ray_actor_options:
 
 ## Production Deployment
 
-For production use:
+### Ray Worker Requirements
 
-1. **Remove hardcoded paths** in `query.py` (line 137)
-2. **Add proper error logging** instead of print statements
-3. **Configure API keys** via environment variables
-4. **Set up monitoring** with Ray Dashboard
-5. **Add rate limiting** for API calls
-6. **Implement caching** for repeated queries
-7. **Add user authentication** via Kodosumi
+**CRITICAL:** All Ray worker nodes MUST have these dependencies installed:
+
+#### 1. Node.js 18+
+```bash
+# Ubuntu/Debian
+apt-get update && apt-get install -y nodejs npm
+
+# Or use NodeSource for specific version
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt-get install -y nodejs
+```
+
+#### 2. Claude Code CLI
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+#### 3. Network Access
+- Outbound HTTPS to `api.anthropic.com`
+- Port 443 (HTTPS) must be allowed
+
+### Recommended: Container-Based Deployment
+
+Create a custom Docker image with all dependencies:
+
+```dockerfile
+FROM rayproject/ray:latest
+
+# Install Node.js 18+
+RUN apt-get update && apt-get install -y curl
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+RUN apt-get install -y nodejs
+
+# Install Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code
+
+# Set working directory
+WORKDIR /app
+```
+
+Build and push:
+```bash
+docker build -t your-registry/ray-claude:latest .
+docker push your-registry/ray-claude:latest
+```
+
+Configure in deployment:
+```yaml
+# data/config/claude_hitl_template.yaml
+runtime_env:
+  container:
+    image: "your-registry/ray-claude:latest"
+  pip:
+    - claude-agent-sdk>=0.1.6
+  env_vars:
+    ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    OTEL_SDK_DISABLED: "true"
+```
+
+### Authentication
+
+**Option A: Environment Variables** (Recommended)
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+koco deploy
+```
+
+**Option B: AWS Bedrock**
+```yaml
+env_vars:
+  CLAUDE_CODE_USE_BEDROCK: "1"
+  # AWS credentials from instance profile or environment
+```
+
+**Option C: Google Vertex AI**
+```yaml
+env_vars:
+  CLAUDE_CODE_USE_VERTEX: "1"
+  # GCP credentials from service account
+```
+
+### Monitoring & Best Practices
+
+1. **Ray Dashboard**: Monitor actor status at `http://localhost:8265`
+2. **Error Logging**: Add structured logging instead of print statements
+3. **Rate Limiting**: Configure max_concurrent_queries in deployment YAML
+4. **Resource Limits**: Ensure adequate RAM (1GB per concurrent conversation)
+5. **Timeout Configuration**: Adjust CONVERSATION_TIMEOUT_SECONDS as needed
+6. **Health Checks**: Monitor actor lifecycle and cleanup
+7. **API Key Rotation**: Use secure secret management (Vault, AWS Secrets Manager)
 
 ## Contributing
 

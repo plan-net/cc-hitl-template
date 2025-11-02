@@ -1,0 +1,36 @@
+# Kodosumi service configuration for Claude HITL Template
+# This is an EXAMPLE file - copy to claude_hitl_template.yaml and configure
+
+name: claude_hitl_template
+route_prefix: /claude-hitl
+import_path: claude_hitl_template.query:fast_app
+
+# Runtime environment for Ray workers
+# IMPORTANT: Workers must have Node.js 18+ and Claude Code CLI installed
+runtime_env:
+  pip:
+    - claude-agent-sdk>=0.1.6
+  env_vars:
+    OTEL_SDK_DISABLED: "true"
+
+    # REQUIRED: Set your Anthropic API key
+    # Get from: https://console.anthropic.com/settings/keys
+    # Set in your environment: export ANTHROPIC_API_KEY=sk-ant-...
+    ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+
+    # IMPORTANT: Ray workers need PATH to system binaries (node, claude)
+    # Ray creates isolated virtualenv that modifies PATH, preventing Claude SDK
+    # from finding node/claude binaries. This explicitly adds system paths.
+    #
+    # macOS (Homebrew): Use the path below
+    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:${PATH}"
+    #
+    # Linux: Use this instead
+    # PATH: "/usr/local/bin:/usr/bin:/bin:${PATH}"
+
+# Ray Serve deployment configuration
+num_replicas: 1
+max_concurrent_queries: 10
+
+# Note: ClaudeSessionActor resources (1 CPU, 1GB) configured in agent.py
+# The deployment itself is lightweight (just HTTP orchestration)
