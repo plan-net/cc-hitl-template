@@ -16,20 +16,38 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Development Setup
 
-### Prerequisites
+### Recommended: Hybrid Setup (macOS Users)
+
+For macOS users, we recommend the **hybrid approach** where Ray cluster runs in OrbStack Linux VM while development happens on macOS:
+
+**Why?** Ray's `image_uri` container feature requires native Linux networking. On macOS, Podman uses QEMU VM which breaks Ray's `127.0.0.1` assumptions.
+
+**Benefits:**
+- Native Linux Ray cluster (containers work as designed)
+- macOS development experience (familiar IDE, tools)
+- Lightweight (<0.1% CPU background usage)
+- Automatic port forwarding
+
+See **[docs/ORBSTACK_SETUP.md](docs/ORBSTACK_SETUP.md)** for complete setup guide.
+
+### Alternative: Native Linux or Remote Cluster
+
+If you're on Linux or have access to a remote Ray cluster:
+
+#### Prerequisites
 - Python 3.12+ (pyenv recommended)
 - Claude Code CLI (required for authentication)
 - kodosumi v1.0.0+
-- Ray cluster
+- Ray cluster (local or remote)
 
-### Installation
+#### Installation
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-### Verify Claude Code CLI
+#### Verify Claude Code CLI
 ```bash
 claude --version
 # If not installed: https://docs.claude.com/en/docs/claude-code
@@ -64,6 +82,33 @@ koco serve --register http://localhost:8001/-/routes
 ```
 
 ## Architecture
+
+### Why Containers? (Optional but Recommended)
+
+This template supports **optional containerization** via `use_container=True` when creating actors. Here's why you might want to use it:
+
+**Problem**: Claude SDK uses `.claude/` folders for configuration (settings, commands, skills). In production scenarios with multiple concurrent sessions, you may want isolation between:
+- **Template behavior** - Generic `.claude/` configuration for all instances
+- **Project-specific behavior** - Custom `.claude/` configuration per deployment
+- **User configurations** - Avoiding mixing with personal `~/.claude/` settings
+
+**Solution**: Run ClaudeSessionActors in containers with:
+1. `template_user/.claude/` baked into Docker image (generic template)
+2. Project `.claude/` mounted from deployed code (project-specific)
+3. Settings merged via `ClaudeAgentOptions(setting_sources=["user", "project", "local"])`
+
+**When to use containers:**
+- Production deployments with multiple concurrent conversations
+- Need to isolate `.claude/` configurations between instances
+- Want reproducible execution environment
+- Running on Linux (native) or hybrid setup (OrbStack)
+
+**When to skip containers** (`use_container=False`):
+- Local development/testing on macOS without OrbStack
+- Single-user scenarios
+- Simpler setup without Docker/Podman
+
+See `claude_hitl_template/agent.py:268-323` and `Dockerfile` for implementation details.
 
 ### Ray Actor Pattern
 
@@ -413,17 +458,34 @@ just start
 
 ### Production Deployment
 
-For production, use container-based deployment:
+#### Hybrid Setup (macOS Development)
 
-```dockerfile
-FROM rayproject/ray:latest
-RUN apt-get update && apt-get install -y curl
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-RUN apt-get install -y nodejs
-RUN npm install -g @anthropic-ai/claude-code
+For macOS users using OrbStack, follow the hybrid approach:
+1. Ray cluster runs in OrbStack Linux VM
+2. Development code stays on macOS
+3. Build Docker image inside the VM
+4. Connect from macOS via Ray Client
+
+See **[docs/ORBSTACK_SETUP.md](docs/ORBSTACK_SETUP.md)** for complete guide.
+
+#### Native Linux Deployment
+
+For Linux servers or production clusters, build the container image:
+
+```bash
+# Build the Docker image
+docker build -t claude-hitl-worker:latest .
+
+# Start Ray cluster
+ray start --head --disable-usage-stats
+
+# Deploy
+koco deploy -r
 ```
 
-See README.md Production Deployment section for full details.
+The `Dockerfile` includes all system dependencies (Node.js 18, Claude CLI) required for containerized actors.
+
+See README.md for full deployment details.
 
 ### Resource Requirements
 

@@ -83,6 +83,30 @@ python3.12 --version
 
 ## Quick Start
 
+### macOS Users: Hybrid Setup (Recommended)
+
+For macOS developers, we recommend the **hybrid approach** where the Ray cluster runs in an OrbStack Linux VM while development happens on macOS:
+
+**Why?** Ray's `image_uri` container feature requires native Linux networking. On macOS, Podman uses a QEMU VM which breaks Ray's `127.0.0.1` assumptions, causing container actors to fail.
+
+**Benefits:**
+- Native Linux Ray cluster (containers work as designed)
+- macOS development experience (IDE, git, all tools stay on macOS)
+- Lightweight (<0.1% CPU when idle)
+- Automatic port forwarding (no manual network config)
+
+**Setup Guide:** See **[docs/ORBSTACK_SETUP.md](docs/ORBSTACK_SETUP.md)** for complete step-by-step setup.
+
+**Summary:**
+1. Install OrbStack: `brew install orbstack`
+2. Create Ubuntu VM: `orb create ubuntu:24.04 ray-cluster`
+3. Setup Ray cluster in VM (install deps, build Docker image)
+4. Develop on macOS, connect via `ray.init("ray://localhost:10001")`
+
+---
+
+### Linux Users or Remote Cluster: Native Setup
+
 ### 1. Clone and Setup
 
 ```bash

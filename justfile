@@ -1,8 +1,21 @@
 # Claude + Kodosumi HITL Template
 
+# Build worker image (auto-detects docker/podman)
+build-worker:
+    @echo "Building Claude HITL worker image..."
+    @if command -v docker &> /dev/null; then \
+        docker build -t claude-hitl-worker:latest .; \
+    elif command -v podman &> /dev/null; then \
+        podman build -t claude-hitl-worker:latest .; \
+    else \
+        echo "Error: Neither docker nor podman found"; \
+        exit 1; \
+    fi
+
 # Start full service stack (Ray + Kodosumi deployment + spooler + admin panel)
+# For hybrid setup: This connects to Ray cluster in OrbStack via RAY_ADDRESS env var
 start:
-    source .venv/bin/activate && ray start --head --disable-usage-stats
+    source .venv/bin/activate && ray start --head --disable-usage-stats || echo "Ray already running or connecting to remote"
     @sleep 2
     source .venv/bin/activate && koco deploy -r
     @sleep 5
