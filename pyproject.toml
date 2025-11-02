@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-kodosumi-hitl-template"
+version = "0.1.0"
+description = "Minimal template showcasing Claude Agent SDK integration with Kodosumi HITL functionality"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk>=0.1.6",
+    "kodosumi>=1.0.0",
+    "ray>=2.47.1",
+    "python-dotenv>=1.1.0",
+    "pytest>=8.4.1",
+]
+
+[tool.setuptools]
+packages = ["claude_hitl_template"]

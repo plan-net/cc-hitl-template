@@ -1,0 +1,27 @@
+# ./data/config/ask_the_crowd.yaml
+name: ask_the_crowd
+route_prefix: /ask_the_crowd
+import_path: ask_the_crowd.query:fast_app
+runtime_env:
+  pip:
+  - requests
+  - langdetect
+  env_vars:
+    OTEL_SDK_DISABLED: "true"
+    # API Keys
+    HYBRIDAI_API_KEY: "your_hybridai_api_key_here"
+    MISTRAL_API_KEY: "your_mistral_api_key_here"
+    GAMMA_API_KEY: "your_gamma_api_key_here"
+    # Gamma AI Configuration (see .env.example for detailed descriptions)
+    GAMMA_TEXT_MODE: "generate"
+    GAMMA_THEME: "Pearl"
+    GAMMA_NUM_CARDS: "5"
+    GAMMA_TEXT_AMOUNT: "detailed"
+    GAMMA_TEXT_TONE: "professional, clear, data-driven"
+    GAMMA_TEXT_AUDIENCE: "business stakeholders"
+    GAMMA_TEXT_LANGUAGE: "en"
+    GAMMA_IMAGE_SOURCE: "aiGenerated"
+    GAMMA_IMAGE_MODEL: ""
+    GAMMA_IMAGE_STYLE: "professional, clean, data visualization"
+    GAMMA_CARD_DIMENSIONS: "16x9"
+    GAMMA_ADDITIONAL_INSTRUCTIONS: ""

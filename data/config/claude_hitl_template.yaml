@@ -1,0 +1,23 @@
+# Kodosumi service configuration for Claude HITL Template
+# This file configures the deployment of the Claude + Kodosumi HITL service
+
+name: claude_hitl_template
+route_prefix: /claude-hitl
+import_path: claude_hitl_template.query:fast_app
+
+# Runtime environment configuration
+# Note: Dependencies are installed in the venv, so no runtime_env needed
+# Uncomment below if you need to add environment variables
+# runtime_env:
+#   env_vars:
+#     MY_API_KEY: "your-key-here"
+
+# Ray Serve deployment configuration
+# Adjust these based on your resource requirements
+num_replicas: 1
+max_concurrent_queries: 10
+
+# Resource allocation (optional)
+# ray_actor_options:
+#   num_cpus: 1
+#   num_gpus: 0
