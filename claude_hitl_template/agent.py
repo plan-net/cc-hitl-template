@@ -19,7 +19,10 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     AssistantMessage,
     TextBlock,
+    ThinkingBlock,
     ToolUseBlock,
+    ToolResultBlock,
+    SystemMessage,
     ResultMessage
 )
 
@@ -125,49 +128,88 @@ class ClaudeSessionActor:
         This method streams messages from the Claude SDK and batches them
         until the stream is exhausted (indicating Claude is waiting for input).
 
-        Message Types:
-        - TextBlock: Claude's text response
-        - ToolUseBlock: Claude using a tool
+        Messages are categorized into two types:
+        - user_messages: Clean, final messages for HITL lock form (TextBlock only)
+        - context_messages: Rich execution context for admin panel (thinking, tool results, system)
+
+        Message Types Handled:
+        - TextBlock: Claude's text response (user-facing)
+        - ThinkingBlock: Claude's internal reasoning (context)
+        - ToolUseBlock: Tool execution request (context)
+        - ToolResultBlock: Tool execution result (context)
+        - SystemMessage: System events/metadata (context)
         - ResultMessage: Task completed
 
         Returns:
             {
                 "status": "ready" | "complete",
-                "messages": [
-                    {"type": "text", "content": "..."},
-                    {"type": "tool", "name": "...", "content": "..."}
+                "user_messages": [{"type": "text", "content": "..."}],
+                "context_messages": [
+                    {"type": "thinking", "content": "..."},
+                    {"type": "tool_use", "name": "...", "input": {...}},
+                    {"type": "tool_result", "content": "...", "is_error": bool},
+                    {"type": "system", "subtype": "...", "data": {...}}
                 ]
             }
         """
-        messages = []
+        user_messages = []
+        context_messages = []
 
         async for message in self.client.receive_response():
             # Check if task is complete
             if isinstance(message, ResultMessage):
                 return {
                     "status": "complete",
-                    "messages": messages
+                    "user_messages": user_messages,
+                    "context_messages": context_messages
                 }
+
+            # Process system messages
+            if isinstance(message, SystemMessage):
+                context_messages.append({
+                    "type": "system",
+                    "subtype": message.subtype,
+                    "data": message.data
+                })
 
             # Process assistant messages
             if isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
-                        messages.append({
+                        # User-facing text goes to both (for HITL lock display)
+                        user_messages.append({
                             "type": "text",
                             "content": block.text
                         })
+                    elif isinstance(block, ThinkingBlock):
+                        # Extended thinking/reasoning output (context only)
+                        context_messages.append({
+                            "type": "thinking",
+                            "content": block.thinking,
+                            "signature": block.signature
+                        })
                     elif isinstance(block, ToolUseBlock):
-                        messages.append({
-                            "type": "tool",
+                        # Tool execution request (context only)
+                        context_messages.append({
+                            "type": "tool_use",
                             "name": block.name,
-                            "content": f"Using tool: {block.name}"
+                            "id": block.id,
+                            "input": block.input
+                        })
+                    elif isinstance(block, ToolResultBlock):
+                        # Tool execution result (context only)
+                        context_messages.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.tool_use_id,
+                            "content": block.content,
+                            "is_error": block.is_error or False
                         })
 
         # Stream exhausted = Claude is ready for next input
         return {
             "status": "ready",
-            "messages": messages
+            "user_messages": user_messages,
+            "context_messages": context_messages
         }
 
     async def check_timeout(self) -> bool:

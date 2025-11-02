@@ -239,12 +239,15 @@ Initializing Claude Agent SDK...
                     # NOT that the conversation should end. Continue to HITL loop to let
                     # user decide whether to respond or end conversation.
 
-                    # HITL pause - Pass Claude's messages to lock handler to display in form
+                    # Display context messages in admin panel (thinking, tool results, etc.)
+                    await _display_context_messages(tracer, result.get("context_messages", []))
+
+                    # HITL pause - Pass only user-facing messages to lock handler
                     user_input = await tracer.lock(
                         "claude-input",
                         {
                             "iteration": iteration,
-                            "messages": result["messages"],
+                            "messages": result.get("user_messages", []),
                             "status": result["status"]
                         }
                     )
@@ -306,6 +309,63 @@ Initializing Claude Agent SDK...
     finally:
         # Always cleanup actor
         await cleanup_actor(execution_id)
+
+
+async def _display_context_messages(tracer: Tracer, context_messages: list):
+    """
+    Display context messages (thinking, tool usage, results) in Kodosumi admin panel.
+
+    These messages provide rich execution context that helps users understand
+    what Claude is doing internally, separate from the clean user-facing messages
+    shown in the HITL lock form.
+
+    Args:
+        tracer: Kodosumi tracer for markdown output
+        context_messages: List of context message dicts
+    """
+    if not context_messages:
+        return
+
+    for msg in context_messages:
+        msg_type = msg.get("type")
+
+        if msg_type == "thinking":
+            # Extended thinking/reasoning output
+            thinking_content = msg.get("content", "")
+            # Truncate very long thinking for readability
+            if len(thinking_content) > 500:
+                thinking_preview = thinking_content[:500] + "..."
+            else:
+                thinking_preview = thinking_content
+            await tracer.markdown(f"🧠 **Claude is thinking:**\n\n```\n{thinking_preview}\n```\n")
+
+        elif msg_type == "tool_use":
+            # Tool execution request
+            tool_name = msg.get("name", "unknown")
+            tool_input = msg.get("input", {})
+            await tracer.markdown(f"🔧 **Using tool: {tool_name}**\n\n```json\n{str(tool_input)[:200]}\n```\n")
+
+        elif msg_type == "tool_result":
+            # Tool execution result
+            content = msg.get("content", "")
+            is_error = msg.get("is_error", False)
+            emoji = "❌" if is_error else "✅"
+            status = "Error" if is_error else "Success"
+
+            # Truncate long results
+            content_str = str(content)
+            if len(content_str) > 300:
+                content_preview = content_str[:300] + "..."
+            else:
+                content_preview = content_str
+
+            await tracer.markdown(f"{emoji} **Tool result ({status}):**\n\n```\n{content_preview}\n```\n")
+
+        elif msg_type == "system":
+            # System messages
+            subtype = msg.get("subtype", "unknown")
+            data = msg.get("data", {})
+            await tracer.markdown(f"ℹ️ **System ({subtype}):** {str(data)[:200]}\n")
 
 
 def _build_conversation_summary(iterations: int, reason: str) -> str:
