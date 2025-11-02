@@ -90,11 +90,8 @@ async def claude_conversation_lock(data: dict):
         content += "*Claude has finished responding. You can continue the conversation or type 'done' to end.*\n\n"
 
     # Add instructions
-    content += "---\n\n### What would you like to do?\n\n"
-    content += "You can:\n"
-    content += "- Provide more input to continue the conversation\n"
-    content += "- Type 'done', 'exit', or 'quit' to end the conversation\n"
-    content += "- Click \"End Conversation\" to stop\n"
+    content += "---\n\n### Continue the conversation\n\n"
+    content += "Type your response to continue, or type **'done'** to end the conversation.\n"
 
     return F.Model(
         F.Markdown(content),
@@ -105,8 +102,7 @@ async def claude_conversation_lock(data: dict):
             required=False,
             rows=3
         ),
-        F.Submit("Send"),
-        F.Action(name="action", value="end_conversation", text="End Conversation")
+        F.Submit("Send")
     )
 
 
@@ -117,17 +113,16 @@ async def claude_conversation_lease(inputs: dict):
     Processes user's response from the lock form.
 
     Args:
-        inputs: User inputs from the form
+        inputs: User inputs from the form (can be None for empty submissions)
 
     Returns:
         Dict with response text and cancellation status
     """
-    # Check if user clicked "End Conversation" button
-    action = inputs.get("action", "").strip()
-    if action == "end_conversation":
-        return {"cancelled": True}
+    # Handle None or non-dict inputs defensively
+    if not isinstance(inputs, dict):
+        inputs = {}
 
-    # Otherwise return user's response
+    # Return user's response
     response_text = inputs.get("response", "").strip()
     return {
         "response": response_text,
