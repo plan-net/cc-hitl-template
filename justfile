@@ -89,7 +89,7 @@ orb-shell:
 orb-deploy:
     @echo "Syncing code to VM..."
     @rsync -av --exclude='.venv' --exclude='__pycache__' --exclude='.git' \
-        ./ ray-cluster.orb.local:~/dev/cc-hitl-template/
+        ./ ray-cluster@orb:~/dev/cc-hitl-template/
     @echo "Deploying to Ray cluster from macOS..."
     @source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && RAY_ADDRESS=http://localhost:8265 koco deploy -r
     @echo "✓ Deployed"
