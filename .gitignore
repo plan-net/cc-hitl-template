@@ -43,5 +43,6 @@ ray_tmp/
 # Kodosumi config with secrets (only commit .example files)
 data/config/claude_hitl_template.yaml
 
-# Claude Code deployment state (machine-specific)
+# Claude Code state files (machine-specific)
 .claude/.last-deploy-state.json
+.claude/.setup-state.json
