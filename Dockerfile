@@ -7,9 +7,13 @@
 #   - Enable multiple independent Claude instances via Ray's image_uri
 #
 # Architecture:
-#   - template_user/.claude/: Generic template behavior (baked into image)
-#   - Project .claude/: Project-specific configuration (from deployed code)
+#   - cc-master-agent-config/.claude/: Generic template behavior (baked into image)
+#   - cc-example-agent-config/.claude/: Project-specific configuration (baked into image)
 #   - Merged via ClaudeAgentOptions(setting_sources=["user", "project", "local"])
+#
+# Build Args:
+#   - MASTER_CONFIG_PATH: Path to cc-master-agent-config/.claude directory
+#   - PROJECT_CONFIG_PATH: Path to cc-example-agent-config/.claude directory
 
 FROM rayproject/ray:2.51.1-py312
 
@@ -33,11 +37,18 @@ RUN pip install --no-cache-dir \
     python-dotenv>=1.1.0 \
     pytest>=8.4.1
 
-# Copy template_user/.claude/ into image (generic template behavior)
-COPY template_user/.claude /app/template_user/.claude
+# Build args for config paths
+ARG MASTER_CONFIG_PATH=template_user/.claude
+ARG PROJECT_CONFIG_PATH=project/.claude
 
-# Set HOME to template_user so "user" settings load from there
-# This enables ClaudeAgentOptions(setting_sources=["user", ...]) to find template config
+# Copy master agent config (template/user-level settings)
+COPY ${MASTER_CONFIG_PATH} /app/template_user/.claude
+
+# Copy project agent config (project-specific settings)
+COPY ${PROJECT_CONFIG_PATH} /app/project/.claude
+
+# Set HOME to template_user so "user" settings load from master config
+# This enables ClaudeAgentOptions(setting_sources=["user", "project", "local"]) to find configs
 ENV HOME=/app/template_user
 
 # Create working directory

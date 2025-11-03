@@ -280,7 +280,7 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: bo
         execution_id: Unique identifier for this conversation
         cwd: Working directory for Claude SDK (default: current dir)
         use_container: If True, run actor in container with isolated .claude folders
-                      (requires Docker/Podman image: claude-hitl-worker:latest)
+                      (requires image: claude-hitl-worker:latest locally or from ghcr.io)
 
     Returns:
         Ray actor handle
@@ -295,15 +295,19 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: bo
     # Build runtime environment
     if use_container:
         # Container isolation for .claude/ folders:
-        # - template_user/.claude/ is baked into the image (generic template behavior)
-        # - project .claude/ comes from the deployed code directory
+        # - cc-master-agent-config/.claude/ is baked into the image (template/user-level config)
+        # - cc-example-agent-config/.claude/ is baked into the image (project-specific config)
         # Ray's image_uri can only be used with env_vars (no 'container' field or volume mounts)
+        #
+        # Image options:
+        #  1. Local build: "claude-hitl-worker:latest" (requires building locally)
+        #  2. GitHub registry: "ghcr.io/<username>/claude-hitl-worker:latest" (see build-and-push.sh)
         runtime_env = RuntimeEnv(
-            image_uri="claude-hitl-worker:latest",
+            image_uri="claude-hitl-worker:latest",  # Change to ghcr.io/<username>/claude-hitl-worker:latest for registry
             env_vars={
                 "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
                 # HOME is set to /app/template_user in Dockerfile
-                # This makes "user" settings load from template_user/.claude/
+                # This makes "user" settings load from cc-master-agent-config/.claude/
             }
         )
         # Ray will deploy code to container, actor runs in that context
