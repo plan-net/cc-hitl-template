@@ -464,7 +464,9 @@ Are you on Linux?
 
 ### Option A: Hybrid macOS + OrbStack Setup (Recommended for macOS)
 
-**Complete Guide**: See **[docs/ORBSTACK_SETUP.md](docs/ORBSTACK_SETUP.md)** for detailed instructions.
+**Setup Guide**: See **[docs/ORBSTACK_SETUP.md](docs/ORBSTACK_SETUP.md)** for one-time setup instructions.
+
+**Daily Workflow**: See **[docs/DAILY_WORKFLOW.md](docs/DAILY_WORKFLOW.md)** for daily usage commands.
 
 **Quick Summary:**
 
@@ -483,19 +485,19 @@ Are you on Linux?
    - Build or pull Docker image
    - Start Ray cluster
 
-4. **Develop on macOS**:
+4. **Daily Usage** (after setup):
    ```bash
-   cd ~/dev/cc-hitl-template
-   python3.12 -m venv .venv
-   source .venv/bin/activate
-   pip install -e .
+   # Morning startup - one command starts everything
+   just orb-up
 
-   # Connect to VM Ray cluster
-   export RAY_ADDRESS=ray://localhost:10001
-   koco deploy -r
+   # During development - edit code, then deploy
+   just orb-deploy
+
+   # End of day - shutdown
+   just orb-down
    ```
 
-**Benefits**: Native macOS development + Linux container support
+**Benefits**: Native macOS development + Linux container support + simple daily workflow
 
 ---
 

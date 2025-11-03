@@ -44,7 +44,7 @@ orb create ubuntu:24.04 ray-cluster
 orb list
 ```
 
-### 3. SSH into VM and Install Dependencies
+### 3. Install System Dependencies in VM
 
 ```bash
 # Enter the VM
@@ -70,6 +70,8 @@ python3.12 --version
 docker --version
 node --version
 ```
+
+**Note:** Ubuntu 24.04 implements PEP 668 which prevents system-wide pip installations. We'll create a virtual environment in the next step.
 
 ### 4. Clone Repository and Setup
 
@@ -127,114 +129,109 @@ docker images | grep claude-hitl-worker
 ```bash
 # Still in VM
 
-# Start Ray head node
-ray start --head --disable-usage-stats --port=6379
+# Start Ray head node with dashboard enabled
+ray start --head --disable-usage-stats --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265
 
 # Verify cluster
 ray status
 ```
 
-OrbStack automatically forwards ports from the VM to macOS, so Ray's GCS port (6379) and Ray Client port (10001) are accessible at `localhost` on your Mac.
+OrbStack automatically forwards ports from the VM to macOS, so Ray's services are accessible at `localhost` on your Mac:
+- Ray Dashboard: http://localhost:8265
+- Ray GCS: localhost:6379
+- Ray Client: localhost:10001
+
+### 8. Access Ray Dashboard
+
+Once Ray is started, you can access the Ray Dashboard from your macOS browser:
+
+**Primary URL**: http://localhost:8265
+
+**Alternative URL**: http://ray-cluster.orb.local:8265
+
+The dashboard provides:
+- Cluster overview and resource usage
+- Actor instances and their status
+- Job monitoring
+- Logs and metrics
+- Task execution traces
+
+**Note**: OrbStack's automatic port forwarding makes the dashboard accessible without any manual configuration. The `--dashboard-host=0.0.0.0` flag ensures the dashboard listens on all interfaces, allowing the port forward to work.
 
 ## Development Workflow
 
-### On macOS (Your Development Machine)
+### Quick Daily Workflow (Recommended)
 
-1. **Keep code on macOS** - Use your favorite IDE, git workflow stays normal
+The simplest way to work with OrbStack is using the justfile commands. All commands run from macOS and control the VM automatically.
 
-2. **Create Python environment** (for local type checking, linting)
+See [Daily Workflow Guide](DAILY_WORKFLOW.md) for detailed instructions.
+
+**Morning startup:**
+```bash
+# On macOS - start everything with one command
+just orb-up
+```
+
+**During development:**
+```bash
+# Edit code on macOS with your IDE
+# Then sync and redeploy:
+just orb-deploy
+```
+
+**End of day:**
+```bash
+just orb-down
+```
+
+### Available OrbStack Commands
+
+All commands are available via `just` and run from your macOS terminal:
+
+| Command | Purpose |
+|---------|---------|
+| `just orb-up` | Complete startup: Ray + deploy + services |
+| `just orb-down` | Complete shutdown |
+| `just orb-deploy` | Sync code and redeploy application |
+| `just orb-start` | Start Ray cluster only |
+| `just orb-stop` | Stop Ray cluster |
+| `just orb-services` | Start Kodosumi services (spooler + admin) |
+| `just orb-status` | Check VM and Ray status |
+| `just orb-logs` | View Kodosumi logs |
+| `just orb-restart` | Restart Ray cluster |
+| `just orb-shell` | SSH into VM |
+
+### Traditional Workflow (Manual)
+
+If you prefer manual control:
+
+**On macOS:**
+1. Keep code on macOS - Use your favorite IDE, git workflow stays normal
+2. Create Python environment for local type checking:
    ```bash
-   # On macOS
    cd /path/to/cc-hitl-template
    python3.12 -m venv .venv
    source .venv/bin/activate
    pip install -e .
    ```
 
-3. **Sync code to VM when testing**
-   ```bash
-   # On macOS - rsync to OrbStack VM
-   rsync -av --exclude='.venv' --exclude='__pycache__' \
-     /path/to/cc-hitl-template/ \
-     ray-cluster.orb.local:~/cc-hitl-template/
-   ```
-
-   Or use OrbStack's automatic file sync (if enabled in preferences)
-
-4. **Connect to Ray cluster via Ray Client**
-   ```python
-   # In your Python code on macOS
-   import ray
-
-   # Connect to Ray cluster in OrbStack VM
-   ray.init("ray://localhost:10001")
-
-   # Now use Ray as normal
-   # Actors will run in the Linux VM with proper networking
-   ```
-
-### Deployment and Testing
-
-**Option A: Deploy from macOS** (Recommended)
+**Sync code to VM:**
 ```bash
-# On macOS - connect to Ray cluster in VM
-export RAY_ADDRESS="ray://localhost:10001"
-
-# Deploy to VM cluster
-source .venv/bin/activate
-koco deploy -r
-
-# Start spooler (in background)
-koco spool &
-
-# Start admin panel
-koco serve --register http://localhost:8001/-/routes
-
-# Access at http://localhost:3370
+rsync -av --exclude='.venv' --exclude='__pycache__' \
+  /path/to/cc-hitl-template/ \
+  ray-cluster.orb.local:~/cc-hitl-template/
 ```
 
-**Option B: Deploy from inside VM**
+**Deploy manually in VM:**
 ```bash
-# SSH into VM
 orb shell ray-cluster
-
-# Navigate to project
 cd cc-hitl-template
 source .venv/bin/activate
-
-# Load environment
 source .env
 export ANTHROPIC_API_KEY
-
-# Deploy
 koco deploy -r
-
-# Start services
 koco spool &
 koco serve --register http://localhost:8001/-/routes
-
-# Access from macOS at http://ray-cluster.orb.local:3370
-```
-
-### Justfile Commands (from macOS)
-
-If you set `export RAY_ADDRESS="ray://localhost:10001"` in your shell:
-
-```bash
-# Start all services (deploy + spooler + admin)
-just start
-
-# Stop services
-just stop
-
-# Check status
-just status
-
-# Run tests
-just test
-
-# Clean caches
-just clean
 ```
 
 ## Architecture
