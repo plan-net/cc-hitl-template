@@ -58,11 +58,12 @@ Essential context for Claude Code when working with this repository.
   - Analyzes local code changes
   - Checks remote config repo changes (git ls-remote)
   - Decides: rebuild image, redeploy, or restart
-  - Asks confirmation for risky ops (rebuild)
+  - Asks confirmation for risky ops (rebuild with detailed reasoning)
   - Auto-approves safe ops (redeploy, restart)
+  - Reports image digest and verifies Ray is using new image
   - Agent: `.claude/agents/deployment.md`
-  - Skills: `docker-build`
-  - State: `.claude/.last-deploy-state.json`
+  - Skills: `docker-build` (auto-invoked)
+  - State: `.claude/.last-deploy-state.json` (includes image digest)
 
 - **`/cc-shutdown`** - Stop all services cleanly
   - Stops Kodosumi services (macOS)
@@ -171,6 +172,8 @@ await cleanup_actor(execution_id)
   "master_config_commit": "abc123",
   "project_config_commit": "def456",
   "docker_image_tag": "ghcr.io/<user>/claude-hitl-worker:latest",
+  "docker_image_digest": "sha256:abc123def456...",
+  "build_timestamp": "2025-11-03T12:28:45Z",
   "code_commit": "abc123"
 }
 ```

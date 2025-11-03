@@ -55,6 +55,13 @@ PROJECT_REMOTE=$(git ls-remote ${PROJECT_CONFIG_REPO} HEAD | cut -f1)
 
 # Compare with last deployed
 # If different → Rebuild needed (configs changed remotely)
+
+# Fetch commit messages for user-friendly reporting:
+# Clone the repo to a temp directory and get recent commits
+git clone ${MASTER_CONFIG_REPO} /tmp/master-config
+cd /tmp/master-config
+git log ${LAST_DEPLOYED_COMMIT}..HEAD --oneline
+# This shows what changed since last deploy
 ```
 
 ### Check Current System State
@@ -130,10 +137,13 @@ just local-logs          # View logs
 ```
 
 **Docker Build:**
-```bash
-bash .claude/skills/docker-build/build.sh
-# Returns: MASTER_CONFIG_COMMIT, PROJECT_CONFIG_COMMIT, DOCKER_IMAGE_TAG
-```
+
+When a Docker image rebuild is needed, describe the requirement clearly:
+- "Build a Docker image with the latest configurations from git repos"
+- The docker-build skill will activate automatically
+- Skill returns: MASTER_CONFIG_COMMIT, PROJECT_CONFIG_COMMIT, DOCKER_IMAGE_TAG, DOCKER_IMAGE_DIGEST, IMAGE_SIZE, BUILD_TIMESTAMP
+
+Parse the skill output from the `=== DEPLOYMENT STATE ===` section.
 
 **Complete Workflows:**
 ```bash
@@ -156,19 +166,40 @@ just orb-down  # Stop everything
 
 ### Example: Ask for Rebuild Confirmation
 
+Show detailed reasoning for why rebuild is needed:
+
 ```
-Detected changes requiring Docker image rebuild:
+🔍 Docker image rebuild required
+
+Remote config changes detected:
 - cc-master-agent-config: 3 new commits since last deploy
-- cc-example-agent-config: Up to date
+  Latest changes:
+  • abc123 - Add /analyze-logs command
+  • def456 - Update permission settings for Bash tool
+  • ghi789 - Add docker-compose skill
+
+- cc-example-agent-config: Up to date (no changes)
+
+Current image: ghcr.io/<username>/claude-hitl-worker:latest
+              Built: 2 days ago
+              Digest: sha256:old123...
 
 Rebuild will:
-1. Clone latest configs from both repos
+1. Clone latest configs from both repos (~10 seconds)
 2. Build new Docker image (~3-5 minutes)
-3. Push to ghcr.io
-4. Deploy updated image to Ray
+3. Push to ghcr.io registry (~30 seconds)
+4. Deploy updated image to Ray cluster
+5. Verify Ray actors using new image
 
-Proceed with rebuild?
+New image will contain:
+- Master config: <new-commit-hash> (+3 commits)
+- Project config: <current-commit-hash> (no change)
+- Base code: <current-commit-hash>
+
+Proceed with rebuild? [Yes/No/Show full diff]
 ```
+
+**Important:** Always explain WHY rebuild is needed, not just "3 commits". Fetch and show actual commit messages.
 
 ## Phase 4: State Management
 
@@ -177,17 +208,22 @@ After successful deployment, update `.claude/.last-deploy-state.json`:
 ```json
 {
   "timestamp": "2025-11-03T12:30:00Z",
-  "master_config_commit": "<captured from build or git ls-remote>",
-  "project_config_commit": "<captured from build or git ls-remote>",
+  "master_config_commit": "<captured from build skill output>",
+  "project_config_commit": "<captured from build skill output>",
   "docker_image_tag": "ghcr.io/<username>/claude-hitl-worker:latest",
+  "docker_image_digest": "sha256:abc123def456...",
+  "build_timestamp": "2025-11-03T12:28:45Z",
   "code_commit": "<git rev-parse HEAD>"
 }
 ```
 
 **When to Update:**
-- After successful Docker build (capture commit hashes from build output)
+- After successful Docker build (capture all fields from build skill output)
 - After successful deployment (update code_commit)
 - Update timestamp on every deployment
+
+**Image Verification:**
+After deployment, verify Ray actors are using the expected image digest.
 
 ## Phase 5: Validation
 
@@ -204,6 +240,27 @@ HTTP_ADMIN=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3370)
 # Expect both to return 200
 ```
 
+### Image Verification (After Docker Build)
+
+When a new Docker image was built, verify Ray actors are using it:
+
+```bash
+# SSH into OrbStack VM and check running containers
+orb ssh ray-cluster "podman ps --format '{{.Image}}'"
+
+# Expected output should match: ghcr.io/<username>/claude-hitl-worker:latest
+
+# For detailed verification, inspect image digest:
+orb ssh ray-cluster "podman inspect <container-id> --format='{{.Image}}'"
+
+# Compare with expected digest from build output
+```
+
+**If verification fails** (Ray using old image):
+- Warn user that Ray may have cached the old image
+- Suggest: Restart Ray cluster or individual actors
+- Explain: "latest" tag can refer to different images (use digest for certainty)
+
 ## Phase 6: Reporting
 
 ### Success Report Template
@@ -212,22 +269,49 @@ HTTP_ADMIN=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3370)
 ✅ Deployment Successful
 
 Actions Taken:
-- [List what was done]
+- [List what was done, e.g.:]
+  • Built new Docker image (3-5 minutes)
+  • Synced code to OrbStack VM
+  • Deployed to Ray cluster
+  • Restarted Kodosumi services
+  • Verified image deployment
+
+Docker Image (if rebuilt):
+  Repository: ghcr.io/<username>/claude-hitl-worker
+  Tag: latest
+  Digest: sha256:abc123def456...
+  Size: 1200MB
+  Built: 2025-11-03 12:30:45 UTC
+  Verified in Ray: ✓ (matching digest confirmed)
 
 Current State:
-- Ray Cluster: Running
-- Ray Dashboard: http://localhost:8265 ✓
-- Admin Panel: http://localhost:3370 ✓
-- Kodosumi Services: Running
+- Ray Cluster: Running ✓
+  Dashboard: http://localhost:8265
+  Actors using image: sha256:abc123... ✓
+
+- Kodosumi Services: Running ✓
+  Admin Panel: http://localhost:3370
+  Spooler: Active
+  Server: Active
 
 Updated Deployment State:
-- Master Config: <commit-hash> (X new commits)
-- Project Config: <commit-hash>
-- Code: <commit-hash>
-- Image: ghcr.io/<username>/claude-hitl-worker:latest
+- Master Config: abc123 (+3 commits since last deploy)
+  Latest changes:
+  • Add /analyze-logs command
+  • Update permission settings
+
+- Project Config: def456 (no change)
+- Code: ghi789
+- Image Digest: sha256:abc123def456...
 
 You can now test your changes at http://localhost:3370
 ```
+
+**Key points for reporting:**
+- Always include image digest when image was rebuilt
+- Show verification status (whether Ray is using the new image)
+- List what changed in config commits (not just "3 new commits")
+- Include build duration and image size for visibility
 
 ### Failure Report Template
 

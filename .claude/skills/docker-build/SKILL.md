@@ -24,21 +24,38 @@ The skill:
 2. Clones the latest `.claude` folders from configured git repos
 3. Builds Docker image with these configurations
 4. Pushes image to GitHub Container Registry (ghcr.io)
-5. Captures commit hashes for deployment state tracking
+5. Captures complete deployment state including:
+   - Commit hashes from config repos
+   - Image digest (SHA256)
+   - Image size and build timestamp
 
 ## Execution
 
-Run the build script:
+The skill activates automatically when you describe needing to build a Docker image with updated configs.
+
+Alternatively, run directly:
 
 ```bash
 bash .claude/skills/docker-build/build.sh
 ```
 
-The script will output commit hashes for state tracking:
+## Output Format
+
+The skill outputs deployment state in a parseable format:
+
 ```
+=== DEPLOYMENT STATE ===
 MASTER_CONFIG_COMMIT=abc123...
 PROJECT_CONFIG_COMMIT=def456...
+DOCKER_IMAGE_TAG=ghcr.io/<username>/claude-hitl-worker:latest
+DOCKER_IMAGE_DIGEST=sha256:abc123def456...
+IMAGE_SIZE=1200MB
+BUILD_TIMESTAMP=2025-11-03T12:30:45Z
+BUILD_STATUS=success
+========================
 ```
+
+This output is captured by the deployment agent for state tracking and verification.
 
 ## Prerequisites
 
@@ -58,12 +75,17 @@ PROJECT_CONFIG_COMMIT=def456...
 
 **Success:**
 - Docker image: `ghcr.io/<username>/claude-hitl-worker:latest`
+- Image digest: `sha256:...` (unique identifier)
 - Image pushed to registry
-- Commit hashes printed for state tracking
+- Complete deployment state including:
+  - Config repo commit hashes
+  - Image digest for verification
+  - Build timestamp and image size
 
 **Failure:**
 - Clear error messages about missing prerequisites
 - Build logs for debugging
+- Exit code 1
 
 ## Validation
 
