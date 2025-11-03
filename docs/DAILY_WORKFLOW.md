@@ -4,7 +4,9 @@ Quick-start guide for daily development with the OrbStack Linux VM setup.
 
 ## Overview
 
-This guide assumes you've completed the [OrbStack Setup](ORBSTACK_SETUP.md) and have:
+This guide assumes you've completed the setup. If not, run `/cc-setup` in Claude Code first - it analyzes your system and creates a guided todo list for complete setup.
+
+**Setup complete?** You should have:
 - OrbStack VM named `ray-cluster` running Ubuntu 24.04
 - Repository cloned at `~/cc-hitl-template` in the VM
 - Python 3.12 virtual environment at `~/cc-hitl-template/.venv` in the VM

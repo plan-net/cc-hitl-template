@@ -23,6 +23,17 @@ Ray's `image_uri` runtime environment feature uses `--network=host` which only w
 - Python 3.12+ installed on macOS (for development)
 - Docker Desktop NOT running (OrbStack replaces it)
 
+## Quick Setup Option
+
+**Prefer guided setup?** Run `/cc-setup` in Claude Code first. It will:
+1. Analyze your macOS system
+2. Create a todo list of required steps
+3. Guide you through each step below with approvals
+
+The manual instructions below explain what `/cc-setup` does behind the scenes.
+
+---
+
 ## Installation
 
 ### 1. Install OrbStack
@@ -159,6 +170,8 @@ The dashboard provides:
 **Note**: OrbStack's automatic port forwarding makes the dashboard accessible without any manual configuration. The `--dashboard-host=0.0.0.0` flag ensures the dashboard listens on all interfaces, allowing the port forward to work.
 
 ## Development Workflow
+
+**First time setup?** Complete the installation steps above or run `/cc-setup` for guided setup.
 
 ### Quick Daily Workflow (Recommended)
 

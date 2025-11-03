@@ -4,9 +4,9 @@ Comprehensive guide for installing all prerequisites for the Claude + Kodosumi H
 
 ## Quick Setup
 
-**Prefer automated setup?** Use the `/cc-setup` command in Claude Code - it handles everything below automatically.
+**Prefer guided setup?** Use the `/cc-setup` command in Claude Code - it analyzes your system, creates a comprehensive todo list, and guides you through each step with individual approvals.
 
-This guide is for manual installation or understanding what `/cc-setup` does.
+This guide is for manual installation or understanding what `/cc-setup` does behind the scenes.
 
 ---
 
@@ -303,10 +303,10 @@ echo "GitHub User: $GITHUB_USERNAME"
 
 After installing OrbStack, create a Linux VM for Ray cluster:
 
-**Automated (recommended)**:
+**Guided (recommended)**:
 ```bash
 # In Claude Code
-/cc-setup  # Creates and configures VM automatically
+/cc-setup  # Analyzes system and guides VM creation with approvals
 ```
 
 **Manual**:
@@ -386,12 +386,28 @@ python -c "from claude_agent_sdk import ClaudeSDKClient; print('Claude SDK impor
 
 ## Next Steps
 
-### Option 1: Automated Full Setup
+### Option 1: Guided Full Setup
 
 ```bash
-# In Claude Code - handles everything
+# In Claude Code - analyzes and guides through everything
 /cc-setup
 ```
+
+**What happens during `/cc-setup`**:
+
+1. **Analysis Phase** (Sub-agent):
+   - Detects your OS (macOS/Linux)
+   - Checks which prerequisites are met vs missing
+   - Reads previous setup state if exists
+   - Creates comprehensive TodoWrite list
+
+2. **Execution Phase** (Main agent):
+   - Reviews todo list with you
+   - Executes each pending item with your approval
+   - Updates todo status in real-time
+   - Validates each step before moving on
+
+This gives you full visibility and control over what gets installed.
 
 ### Option 2: Manual Setup
 

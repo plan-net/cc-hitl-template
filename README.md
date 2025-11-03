@@ -21,23 +21,26 @@ git clone <your-repo-url> cc-hitl-template
 cd cc-hitl-template
 
 # In Claude Code:
-/cc-setup  # Autonomous setup agent guides you through everything
+/cc-setup  # Guided setup with todo list and approvals
 ```
 
 The setup agent will:
-- Detect your OS and adjust workflow
-- Verify prerequisites (Python, Node.js, Docker/OrbStack)
-- Guide installations if needed
+- Analyze your system and detect your OS
+- Check which prerequisites are installed vs missing
+- Create a comprehensive todo list showing progress
+- Guide you through each installation with individual approvals
 - Configure environment with your API keys
 - Set up OrbStack VM (macOS) or Docker (Linux)
 - Start Ray cluster and Kodosumi services
 - Validate everything is working
 
+**How it works**: Sub-agent analyzes system → Creates TodoWrite list → Main agent executes with your approval
+
 **Result**: Working system at http://localhost:3370 in ~10-15 minutes.
 
 ### Claude Code Features in This Template
 
-- **`/cc-setup`** - Autonomous setup automation with prerequisite checking and VM configuration
+- **`/cc-setup`** - Guided setup automation (analyzer-only pattern with TodoWrite)
 - **`/cc-deploy`** - Intelligent deployment with change detection and automatic Docker rebuilds
 - **`/cc-shutdown`** - Clean shutdown of all services
 
@@ -102,7 +105,7 @@ See [docs/SETUP.md](docs/SETUP.md) for installation instructions.
 
 ### Setup
 
-**Option 1: Automated (Recommended)**
+**Option 1: Guided Setup (Recommended)**
 ```bash
 # In Claude Code
 /cc-setup
@@ -186,6 +189,7 @@ Autonomous operations with intelligent decision-making:
 - **Skills** (docker-build, prerequisite-check, vm-setup): Reusable capabilities
 - **State tracking**: Idempotent operations, skip completed steps
 - **Error recovery**: Handle common issues automatically
+- **Analyzer-only pattern** (`/cc-setup`): Sub-agent analyzes → TodoWrite → Main agent executes
 
 ### Configuration Layers
 Docker images bake multiple `.claude/` configuration sources:

@@ -43,13 +43,16 @@ Essential context for Claude Code when working with this repository.
 
 ### Claude Code Slash Commands
 
-- **`/cc-setup`** - Autonomous setup automation
+- **`/cc-setup`** - Guided setup automation (analyzer-only pattern)
+  - Sub-agent analyzes system and creates TodoWrite list
+  - Main agent executes pending items with individual approvals
   - Detects OS, checks prerequisites
   - Creates OrbStack VM (macOS) or configures Docker (Linux)
   - Guides through API key configuration
   - Starts and validates services
   - Agent: `.claude/agents/setup.md`
   - Skills: `prerequisite-check`, `vm-setup`
+  - Pattern: Analyzer (sub-agent) → TodoWrite → Executor (main agent)
 
 - **`/cc-deploy`** - Autonomous deployment with change detection
   - Analyzes local code changes
@@ -151,6 +154,13 @@ await cleanup_actor(execution_id)
 - Entry points that trigger agents
 - Use Task tool to invoke agent
 - Agent returns final report
+
+**Analyzer-Only Pattern** (Setup Agent):
+- Sub-agent analyzes system state (prerequisites, config, services)
+- Creates TodoWrite list showing completed vs pending items
+- Main agent executes pending todos with user approvals
+- Benefits: Full visibility, individual control, progress tracking
+- Example: `/cc-setup` command
 
 ### State Tracking
 

@@ -7,10 +7,10 @@ Get the Claude + Kodosumi HITL template running in 5 minutes.
 ```
 Are you on macOS?
 ├─ Yes → Use Claude Code Setup (recommended)
-│         Autonomous setup with /cc-setup command
+│         Guided setup with /cc-setup command
 │
 └─ No (Linux)
-    ├─ Have Claude Code? → Use /cc-setup (automated)
+    ├─ Have Claude Code? → Use /cc-setup (guided with approvals)
     └─ No Claude Code? → Manual setup (see below)
 ```
 
@@ -18,7 +18,7 @@ Are you on macOS?
 
 ## Option 1: Claude Code Setup (Recommended)
 
-**Best for**: Everyone - fully automated, guided setup
+**Best for**: Everyone - guided setup with todo list and individual approvals
 
 ### Steps
 
@@ -34,27 +34,33 @@ Are you on macOS?
    /cc-setup
    ```
 
-3. **Follow the prompts**
-   - Agent will check prerequisites
-   - Guide you through installations if needed
-   - Prompt for API keys (ANTHROPIC_API_KEY, GITHUB_TOKEN)
+3. **Follow the guided workflow**
+   - Agent analyzes system and creates todo list
+   - Shows what's completed vs what needs to be done
+   - Guides you through each pending item with approvals
+   - Prompts for API keys (ANTHROPIC_API_KEY, GITHUB_TOKEN)
+   - Each installation requires your approval
    - Set up OrbStack VM (macOS) or Docker (Linux)
-   - Start all services automatically
+   - Start all services with validation
 
 4. **Access the application**
    - Open http://localhost:3370 in your browser
    - Navigate to "Claude HITL Template"
    - Start your first conversation!
 
-**What the agent does for you**:
-- ✅ Detects your OS and adjusts workflow
-- ✅ Verifies all prerequisites
+**What the guided setup does**:
+- ✅ Analyzes your system and detects OS
+- ✅ Creates comprehensive todo list showing progress
+- ✅ Verifies which prerequisites are met vs missing
+- ✅ Guides you through each installation with approvals
 - ✅ Creates Python virtual environment
 - ✅ Installs dependencies
 - ✅ Configures .env with your API keys
 - ✅ Sets up OrbStack VM (macOS only)
 - ✅ Starts Ray cluster and Kodosumi services
 - ✅ Validates everything is working
+
+**How it works**: Sub-agent analyzes → Creates TodoWrite list → Main agent executes with your approval
 
 **Time to complete**: 10-15 minutes (most is downloads/installations)
 
