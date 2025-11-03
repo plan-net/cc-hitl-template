@@ -64,13 +64,6 @@ orb-start:
     @echo "✓ Ray cluster started"
     @echo "  Dashboard: http://localhost:8265"
 
-# Stop Kodosumi services in OrbStack VM
-orb-stop-services:
-    @echo "Stopping Kodosumi services..."
-    @-orb -m ray-cluster bash -c "pkill -f 'koco spool' || true"
-    @-orb -m ray-cluster bash -c "pkill -f 'koco serve' || true"
-    @echo "✓ Kodosumi services stopped"
-
 # Stop Ray cluster in OrbStack VM
 orb-stop:
     @echo "Stopping Ray cluster..."
@@ -92,41 +85,50 @@ orb-shell:
     @echo "Connecting to OrbStack VM..."
     @orb -m ray-cluster
 
-# Deploy application to OrbStack VM
+# Deploy application to Ray cluster in OrbStack VM (run from macOS)
 orb-deploy:
     @echo "Syncing code to VM..."
     @rsync -av --exclude='.venv' --exclude='__pycache__' --exclude='.git' \
         ./ ray-cluster.orb.local:~/dev/cc-hitl-template/
-    @echo "Deploying to Ray cluster..."
-    @orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && koco deploy -r"
+    @echo "Deploying to Ray cluster from macOS..."
+    @source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && RAY_ADDRESS=http://localhost:8265 koco deploy -r
     @echo "✓ Deployed"
 
-# Start Kodosumi services in OrbStack VM (spooler + admin panel)
-orb-services:
-    @echo "Starting Kodosumi services in VM..."
-    @orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && nohup koco spool > /tmp/koco-spool.log 2>&1 & nohup koco serve --register http://localhost:8001/-/routes > /tmp/koco-serve.log 2>&1 &"
+# Start Kodosumi services on macOS (spooler + admin panel)
+local-services:
+    @echo "Starting Kodosumi services on macOS..."
+    @source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && \
+        nohup koco spool > /tmp/koco-spool.log 2>&1 & \
+        nohup koco serve --register http://localhost:8001/-/routes > /tmp/koco-serve.log 2>&1 &
     @sleep 3
     @echo "✓ Services started"
     @echo "  Admin panel: http://localhost:3370"
     @echo "  Spooler logs: /tmp/koco-spool.log"
     @echo "  Server logs: /tmp/koco-serve.log"
 
-# View Kodosumi logs from OrbStack VM
-orb-logs:
+# Stop Kodosumi services on macOS
+local-stop-services:
+    @echo "Stopping Kodosumi services on macOS..."
+    @-pkill -f 'koco spool' || true
+    @-pkill -f 'koco serve' || true
+    @echo "✓ Kodosumi services stopped"
+
+# View Kodosumi logs from macOS
+local-logs:
     @echo "Showing Kodosumi logs (Ctrl+C to exit)..."
-    @orb -m ray-cluster bash -c "tail -f /tmp/koco-*.log"
+    @tail -f /tmp/koco-*.log
 
 # Restart Ray cluster in OrbStack VM
 orb-restart: orb-stop
     @sleep 2
     @just orb-start
 
-# Complete daily startup: start Ray + deploy + start services
+# Complete daily startup: start Ray + deploy + start local services
 orb-up: orb-start
     @sleep 3
     @just orb-deploy
     @sleep 2
-    @just orb-services
+    @just local-services
     @echo ""
     @echo "===================================="
     @echo "✓ Everything is running!"
@@ -135,6 +137,6 @@ orb-up: orb-start
     @echo "  Admin Panel: http://localhost:3370"
     @echo ""
 
-# Complete shutdown: stop services + stop Ray
-orb-down: orb-stop-services orb-stop
+# Complete shutdown: stop local services + stop Ray + stop VM
+orb-down: local-stop-services orb-stop
     @echo "✓ Everything stopped"
