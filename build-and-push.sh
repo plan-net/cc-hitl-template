@@ -143,13 +143,22 @@ fi
 echo -e "${GREEN}✓ Configs cloned successfully${NC}"
 echo ""
 
+# Copy .claude folders into build context
+echo -e "${YELLOW}→ Copying configs into build context...${NC}"
+mkdir -p ./build_configs/master
+mkdir -p ./build_configs/project
+cp -r "${TMP_DIR}/master/.claude" ./build_configs/master/
+cp -r "${TMP_DIR}/project/.claude" ./build_configs/project/
+echo -e "${GREEN}✓ Configs copied${NC}"
+echo ""
+
 # Build image
 IMAGE_NAME="ghcr.io/${GITHUB_USERNAME}/claude-hitl-worker:${IMAGE_TAG}"
 
 echo -e "${YELLOW}→ Building Docker image: ${IMAGE_NAME}${NC}"
 ${CONTAINER_TOOL} build \
-  --build-arg MASTER_CONFIG_PATH="${TMP_DIR}/master/.claude" \
-  --build-arg PROJECT_CONFIG_PATH="${TMP_DIR}/project/.claude" \
+  --build-arg MASTER_CONFIG_PATH="build_configs/master/.claude" \
+  --build-arg PROJECT_CONFIG_PATH="build_configs/project/.claude" \
   -t "${IMAGE_NAME}" \
   .
 
@@ -180,3 +189,8 @@ else
   echo -e "${YELLOW}To push later:${NC}"
   echo -e "   ${CONTAINER_TOOL} push ${IMAGE_NAME}"
 fi
+
+# Cleanup
+echo -e "${YELLOW}→ Cleaning up...${NC}"
+rm -rf ./build_configs
+echo -e "${GREEN}✓ Cleanup complete${NC}"

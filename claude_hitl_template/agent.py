@@ -303,7 +303,7 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: bo
         #  1. Local build: "claude-hitl-worker:latest" (requires building locally)
         #  2. GitHub registry: "ghcr.io/<username>/claude-hitl-worker:latest" (see build-and-push.sh)
         runtime_env = RuntimeEnv(
-            image_uri="claude-hitl-worker:latest",  # Change to ghcr.io/<username>/claude-hitl-worker:latest for registry
+            image_uri="ghcr.io/plan-net/claude-hitl-worker:latest",  # Container registry image with baked configs
             env_vars={
                 "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
                 # HOME is set to /app/template_user in Dockerfile
