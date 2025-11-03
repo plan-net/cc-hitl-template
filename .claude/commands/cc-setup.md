@@ -1,35 +1,44 @@
 ---
-description: Autonomous setup automation for complete project installation
+description: Analyze system and create setup/validation todo list
 allowed-tools: [Task]
 ---
 
-Set up the entire Claude + Kodosumi HITL development environment automatically.
+Analyze your system and create a comprehensive todo list for setup or validation.
 
 ## Your Task
 
-Use the Task tool to invoke the setup agent. Tell the agent to:
-1. Detect the operating system and current environment
-2. Check prerequisites (Python, OrbStack/Docker, Node.js, Claude CLI)
-3. Guide through missing installations
-4. Set up OrbStack VM (macOS) or Docker (Linux)
-5. Configure .env file with required secrets
-6. Clone configuration repositories
-7. Build/pull Docker images
-8. Start and validate full stack
-9. Report final status and next steps
+Use the Task tool to invoke the setup agent with subagent_type "general-purpose".
 
-The setup agent will handle everything autonomously and report back when done.
+Tell the agent to follow the instructions in `.claude/agents/setup.md` exactly.
+
+The setup agent will:
+1. Analyze your current system state
+2. Check what's installed vs missing (prerequisites, venv, config, services)
+3. Detect if setup was completed before
+4. Create a comprehensive todo list with TodoWrite
+
+**The agent does NOT install or configure anything - it only analyzes and creates the todo list.**
 
 ## Expected Outcome
 
-After running `/cc-setup`, you should have:
-- ✅ All prerequisites installed and verified
-- ✅ OrbStack VM running (macOS) or Docker ready (Linux)
-- ✅ Configuration repositories cloned
-- ✅ .env file configured
-- ✅ Docker image built/pulled
-- ✅ Ray cluster running in VM
-- ✅ Kodosumi services deployed
-- ✅ Admin panel accessible at http://localhost:3370
+After running `/cc-setup`, you'll receive:
 
-The agent will guide you through any manual steps (e.g., providing API keys) and fix common issues automatically.
+**Todo List** showing:
+- ✅ What's already completed (green checkmarks)
+- ⏳ What needs to be done (pending items with exact commands)
+
+**Analysis Summary** including:
+- System type (macOS/Linux)
+- Setup state (Fresh / Partial / Complete / Running)
+- Prerequisites status
+- Services status
+
+## Next Steps
+
+After the agent completes analysis, you'll work through the todo list with the main Claude Code agent:
+- Execute each pending item one by one
+- Get guidance and commands for each step
+- Approve system modifications as needed
+- Track progress in real-time via the todo list
+
+This approach gives you full visibility and control over the setup process.
