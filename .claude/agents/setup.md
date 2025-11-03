@@ -18,6 +18,64 @@ Transform a fresh repository clone into a fully working development environment 
 - Docker images built
 - Services running and validated
 
+## Progress Communication (CRITICAL)
+
+You MUST communicate clearly at every step so the user understands what's happening:
+
+### 1. At the Very Start
+Announce your plan:
+```
+I'll guide you through setup in up to 10 phases:
+1. Detect OS and check existing setup state
+2. Check prerequisites
+3. Create Python virtual environment
+4. Configure .env file
+5. Set up OrbStack VM (macOS only)
+6. Sync code to VM (macOS only)
+7. Start services
+8. Validate everything is working
+9. Update state tracking
+10. Report final status
+
+Let me start by checking if setup was already completed...
+```
+
+### 2. Before Each Phase
+Announce the phase clearly:
+```
+Phase X/10: [Phase Name]
+[Brief explanation of what this phase does]
+```
+
+### 3. Before Each Command
+Explain what you're about to do and why:
+```
+I'm going to check if Python 3.12 is installed by running `python3.12 --version`.
+Python 3.12+ is required for Ray and Kodosumi.
+```
+
+### 4. After Each Phase
+Report the result:
+```
+✓ Phase X complete - [summary of what was accomplished]
+```
+
+### 5. When Setup Already Exists
+If `.claude/.setup-state.json` shows `setup_completed: true`, announce it prominently:
+```
+✅ Setup was previously completed on [timestamp].
+
+Your current configuration:
+- OS: [os]
+- Python: [version]
+- Prerequisites: ✓ Checked
+- Virtual env: ✓ Created
+- Services: ✓ Started
+
+I'll validate everything is still working and only fix issues if needed.
+Skipping to Phase 8: Validation...
+```
+
 ## Architecture Overview
 
 **macOS Setup (Hybrid)**:
@@ -31,7 +89,29 @@ Transform a fresh repository clone into a fully working development environment 
 
 ## Phase 1: Environment Detection
 
-### Detect Operating System
+**CRITICAL: Check Existing Setup State FIRST!**
+
+### Step 1: Check if Setup Was Already Completed
+
+**BEFORE doing anything else**, check the setup state file:
+
+```bash
+cat .claude/.setup-state.json
+```
+
+**If the file exists and shows `"setup_completed": true`**:
+1. **Announce it clearly**: "✅ Setup was previously completed on [timestamp]. I'll validate everything is working and only fix issues if needed."
+2. **Show the current configuration** from the state file (OS, Python version, what's been done)
+3. **Skip directly to Phase 8** (Validation) - don't redo completed work
+4. **Only fix things that are actually broken**
+
+**If the file doesn't exist or `setup_completed` is false**:
+- Announce: "No previous setup detected. Starting fresh installation."
+- Proceed with full setup from Step 2 below
+
+### Step 2: Detect Operating System
+
+Only run if doing fresh setup:
 
 ```bash
 # Detect OS
@@ -42,12 +122,17 @@ sw_vers  # macOS
 lsb_release -a  # Linux (if available)
 ```
 
-### Check Current State
+**Announce the result**:
+```
+Detected: macOS (Darwin) / Linux
+This determines whether I'll use OrbStack (macOS) or native Docker (Linux).
+```
+
+### Step 3: Check Directory Structure
+
+Only if doing fresh setup:
 
 ```bash
-# Check if setup has been run before
-cat .claude/.setup-state.json 2>/dev/null || echo "First time setup"
-
 # Check directory structure
 ls -la .env 2>/dev/null || echo ".env missing"
 ls -la .venv 2>/dev/null || echo "venv missing"
@@ -55,31 +140,92 @@ ls -la .venv 2>/dev/null || echo "venv missing"
 
 ## Phase 2: Prerequisites Check
 
+**Announce the phase**:
+```
+Phase 2/10: Checking Prerequisites
+
+I need to verify all required software is installed. The prerequisite-check skill will test:
+- Python 3.12+ (required for Ray and Kodosumi)
+- Node.js 18+ (required for Claude CLI)
+- Claude Code CLI (required for Claude SDK)
+- Git (required for repository operations)
+- macOS: OrbStack, Podman, Homebrew
+- Linux: Docker
+
+Running: bash .claude/skills/prerequisite-check/check.sh
+```
+
 Use the `prerequisite-check` skill to verify all requirements:
 
 ```bash
 bash .claude/skills/prerequisite-check/check.sh
 ```
 
-The skill will check for:
-1. Python 3.12+
-2. Podman (macOS) or Docker (Linux)
-3. OrbStack (macOS only)
-4. Node.js 18+
-5. Claude Code CLI
-6. Git
+**After the skill runs, announce the result**:
+- If all pass: "✓ Phase 2 complete - All prerequisites verified"
+- If some fail: "⚠ Phase 2 found missing prerequisites: [list them]"
 
 **If missing prerequisites**:
-- Provide clear installation instructions
-- For macOS Homebrew packages, ask permission to install
-- Guide user through manual installations
-- Re-check after installations
 
-### Common Installation Commands
+For EACH missing prerequisite, follow this pattern:
+
+1. **Explain what and why**:
+   ```
+   ⚠ [Prerequisite Name] is missing.
+
+   [Name] is required for [purpose].
+   Example: "Python 3.12 is required for Ray and Kodosumi."
+   ```
+
+2. **Show the installation command**:
+   ```
+   I'll install it with: [command]
+   Example: "I'll install it with: brew install python@3.12"
+   ```
+
+3. **Install it** (user will be prompted to approve via bash permission):
+   ```bash
+   # macOS examples
+   brew install python@3.12
+   brew install orbstack
+   brew install podman
+   brew install node@18
+   sudo npm install -g @anthropic-ai/claude-code
+
+   # Linux examples
+   sudo apt update
+   sudo apt install -y python3.12 python3.12-venv python3-pip
+   sudo apt install -y docker.io
+   curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+   sudo apt install -y nodejs
+   sudo npm install -g @anthropic-ai/claude-code
+   ```
+
+4. **Verify installation**:
+   ```
+   Verifying installation...
+   [runs version check command]
+
+   ✓ [Name] installed successfully (version X.Y.Z)
+   ```
+
+5. **Move to next missing prerequisite**
+
+After installing ALL missing prerequisites:
+- Re-run prerequisite check: `bash .claude/skills/prerequisite-check/check.sh`
+- If still failing, troubleshoot and try again
+- Don't proceed until all prerequisites pass
+
+**Important**: Don't ask user to run commands manually. YOU install them (with approval prompts).
+
+### Installation Commands Reference
+
+These are the commands YOU will run (with user approval) when prerequisites are missing.
 
 **macOS Prerequisites**:
 ```bash
-# Homebrew (if not installed)
+# Homebrew (if not installed) - Ask user to install this manually if missing
+# It requires interactive prompts
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Python 3.12
@@ -100,8 +246,8 @@ sudo npm install -g @anthropic-ai/claude-code
 
 **Linux Prerequisites**:
 ```bash
-# Ubuntu/Debian example
-sudo apt update
+# Ubuntu/Debian
+sudo apt update  # Always run before installing packages
 
 # Python 3.12
 sudo apt install -y python3.12 python3.12-venv python3-pip
@@ -117,6 +263,8 @@ sudo apt install -y nodejs
 # Claude CLI
 sudo npm install -g @anthropic-ai/claude-code
 ```
+
+**Note**: Each command will prompt for user approval. You install them automatically once approved.
 
 ## Phase 3: Repository Setup
 
