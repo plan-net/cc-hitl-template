@@ -56,16 +56,28 @@ clean:
 
 # Start Ray cluster in OrbStack VM
 orb-start:
-    @echo "Starting Ray cluster in OrbStack VM..."
-    @orb shell ray-cluster "cd ~/cc-hitl-template && source .venv/bin/activate && ray start --head --disable-usage-stats --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265"
+    @echo "Starting ray-cluster VM..."
+    @orb start ray-cluster
+    @sleep 2
+    @echo "Starting Ray cluster in VM..."
+    @orb -m ray-cluster bash -c "source .venv/bin/activate && ray start --head --disable-usage-stats --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265"
     @echo "✓ Ray cluster started"
     @echo "  Dashboard: http://localhost:8265"
+
+# Stop Kodosumi services in OrbStack VM
+orb-stop-services:
+    @echo "Stopping Kodosumi services..."
+    @-orb -m ray-cluster bash -c "pkill -f 'koco spool' || true"
+    @-orb -m ray-cluster bash -c "pkill -f 'koco serve' || true"
+    @echo "✓ Kodosumi services stopped"
 
 # Stop Ray cluster in OrbStack VM
 orb-stop:
     @echo "Stopping Ray cluster..."
-    @-orb shell ray-cluster "ray stop" 2>/dev/null || echo "Ray not running"
-    @echo "✓ Ray cluster stopped"
+    @-orb -m ray-cluster bash -c "source .venv/bin/activate && ray stop" 2>/dev/null || echo "Ray not running"
+    @echo "Stopping ray-cluster VM..."
+    @orb stop ray-cluster
+    @echo "✓ Ray cluster and VM stopped"
 
 # Check OrbStack VM and Ray status
 orb-status:
@@ -73,26 +85,26 @@ orb-status:
     @orb list | grep ray-cluster || echo "VM not running"
     @echo ""
     @echo "=== Ray Cluster Status ==="
-    @orb shell ray-cluster "ray status" 2>/dev/null || echo "Ray not running"
+    @-orb -m ray-cluster bash -c "source .venv/bin/activate && ray status" 2>/dev/null || echo "Ray not running"
 
 # SSH into OrbStack VM
 orb-shell:
     @echo "Connecting to OrbStack VM..."
-    orb shell ray-cluster
+    @orb -m ray-cluster
 
 # Deploy application to OrbStack VM
 orb-deploy:
     @echo "Syncing code to VM..."
     @rsync -av --exclude='.venv' --exclude='__pycache__' --exclude='.git' \
-        ./ ray-cluster.orb.local:~/cc-hitl-template/
+        ./ ray-cluster.orb.local:~/dev/cc-hitl-template/
     @echo "Deploying to Ray cluster..."
-    @orb shell ray-cluster "cd ~/cc-hitl-template && source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && koco deploy -r"
+    @orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && koco deploy -r"
     @echo "✓ Deployed"
 
 # Start Kodosumi services in OrbStack VM (spooler + admin panel)
 orb-services:
     @echo "Starting Kodosumi services in VM..."
-    @orb shell ray-cluster "cd ~/cc-hitl-template && source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && nohup koco spool > /tmp/koco-spool.log 2>&1 & nohup koco serve --register http://localhost:8001/-/routes > /tmp/koco-serve.log 2>&1 &"
+    @orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && source .env && export ANTHROPIC_API_KEY && nohup koco spool > /tmp/koco-spool.log 2>&1 & nohup koco serve --register http://localhost:8001/-/routes > /tmp/koco-serve.log 2>&1 &"
     @sleep 3
     @echo "✓ Services started"
     @echo "  Admin panel: http://localhost:3370"
@@ -102,7 +114,7 @@ orb-services:
 # View Kodosumi logs from OrbStack VM
 orb-logs:
     @echo "Showing Kodosumi logs (Ctrl+C to exit)..."
-    @orb shell ray-cluster "tail -f /tmp/koco-*.log"
+    @orb -m ray-cluster bash -c "tail -f /tmp/koco-*.log"
 
 # Restart Ray cluster in OrbStack VM
 orb-restart: orb-stop
@@ -124,5 +136,5 @@ orb-up: orb-start
     @echo ""
 
 # Complete shutdown: stop services + stop Ray
-orb-down: orb-stop
+orb-down: orb-stop-services orb-stop
     @echo "✓ Everything stopped"

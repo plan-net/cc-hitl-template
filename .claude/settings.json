@@ -22,6 +22,11 @@
       "Bash(source:*)",
       "Bash(orb ssh:*)",
       "Bash(orb -m ray-cluster ssh:*)",
+      "Bash(orb -m ray-cluster:*)",
+      "Bash(orb start:*)",
+      "Bash(orb stop:*)",
+      "Bash(orb list:*)",
+      "Bash(lsof:*)",
       "Bash(curl:*)",
       "Bash(git add:*)"
     ],
