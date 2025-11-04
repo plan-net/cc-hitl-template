@@ -13,6 +13,9 @@ The Ray Actor pattern solves the subprocess lifecycle problem by:
 import ray
 import time
 import os
+import json
+import logging
+from pathlib import Path
 from typing import Optional, Dict, List
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -25,6 +28,9 @@ from claude_agent_sdk import (
     SystemMessage,
     ResultMessage
 )
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 
 def get_container_image_config() -> dict:
@@ -60,6 +66,94 @@ def get_container_image_config() -> dict:
     }
 
 
+def load_marketplace_settings() -> Dict:
+    """
+    Read and merge marketplace settings from master and project configs.
+
+    Master config provides baseline plugins (user-level).
+    Project config adds/overrides plugins (project-level).
+
+    Returns:
+        Dict with 'marketplaces' and 'enabled_plugins' keys
+    """
+    marketplaces = {}
+    enabled_plugins = {}
+
+    # Read master config (user-level settings)
+    master_settings_path = Path("/app/template_user/.claude/settings.json")
+    if master_settings_path.exists():
+        try:
+            data = json.loads(master_settings_path.read_text())
+            marketplaces.update(data.get("extraKnownMarketplaces", {}))
+            enabled_plugins.update(data.get("enabledPlugins", {}))
+            logger.info(f"Loaded master settings: {len(enabled_plugins)} plugins declared")
+        except Exception as e:
+            logger.error(f"Failed to read master settings from {master_settings_path}: {e}")
+    else:
+        logger.warning(f"Master settings not found at {master_settings_path}")
+
+    # Read project config (project-level settings, overrides master)
+    project_settings_path = Path("/app/.claude/settings.json")
+    if project_settings_path.exists():
+        try:
+            data = json.loads(project_settings_path.read_text())
+            marketplaces.update(data.get("extraKnownMarketplaces", {}))
+            enabled_plugins.update(data.get("enabledPlugins", {}))
+            logger.info(f"Loaded project settings: {len(enabled_plugins)} total plugins after merge")
+        except Exception as e:
+            logger.error(f"Failed to read project settings from {project_settings_path}: {e}")
+    else:
+        logger.info(f"Project settings not found at {project_settings_path} (optional)")
+
+    return {
+        "marketplaces": marketplaces,
+        "enabled_plugins": enabled_plugins
+    }
+
+
+def resolve_plugin_paths(settings: Dict) -> List[Dict[str, str]]:
+    """
+    Convert enabledPlugins to Agent SDK plugin specs.
+
+    Parses "plugin-name@marketplace-name" format and resolves to filesystem paths.
+    Plugins must exist at /app/plugins/{marketplace}/plugins/{plugin}/
+
+    Args:
+        settings: Dict from load_marketplace_settings()
+
+    Returns:
+        List of plugin specs for ClaudeAgentOptions
+    """
+    plugin_specs = []
+
+    for plugin_key, enabled in settings["enabled_plugins"].items():
+        if not enabled:
+            logger.debug(f"Skipping disabled plugin: {plugin_key}")
+            continue
+
+        # Parse "plugin-name@marketplace-name" format
+        if "@" not in plugin_key:
+            logger.warning(f"Invalid plugin key format (missing @): {plugin_key}")
+            continue
+
+        plugin_name, marketplace_name = plugin_key.split("@", 1)
+
+        # Plugins are baked into /app/plugins/{marketplace}/plugins/{plugin}
+        # This path structure matches how build.sh copies them
+        plugin_path = f"/app/plugins/{marketplace_name}/plugins/{plugin_name}"
+
+        if Path(plugin_path).exists():
+            plugin_specs.append({
+                "type": "local",
+                "path": plugin_path
+            })
+            logger.info(f"✓ Found plugin: {plugin_name}@{marketplace_name}")
+        else:
+            logger.warning(f"✗ Plugin path not found: {plugin_path} (declared but not baked into image)")
+
+    return plugin_specs
+
+
 @ray.remote
 class ClaudeSessionActor:
     """
@@ -92,7 +186,27 @@ class ClaudeSessionActor:
         # In container, HOME is set to /app/template_user by Dockerfile ENV
         is_containerized = os.getenv("HOME") == "/app/template_user"
 
+        # Load plugins from settings.json
+        plugin_specs = []
         if is_containerized:
+            # In container: Load plugins from marketplace settings
+            logger.info("=" * 70)
+            logger.info("PLUGIN LOADING")
+            logger.info("=" * 70)
+
+            settings = load_marketplace_settings()
+            plugin_specs = resolve_plugin_paths(settings)
+
+            if plugin_specs:
+                logger.info(f"Successfully loaded {len(plugin_specs)} plugins:")
+                for spec in plugin_specs:
+                    logger.info(f"  → {spec['path']}")
+            else:
+                logger.warning("No plugins loaded - agent will run without plugins")
+                logger.warning("Check that settings.json has enabledPlugins configured")
+
+            logger.info("=" * 70)
+
             # In container: Enable setting_sources to merge .claude folders
             # - "user" → /app/template_user/.claude/ (baked into image)
             # - "project" → .claude/ in deployed code directory
@@ -105,7 +219,8 @@ class ClaudeSessionActor:
         self.options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=cwd or os.getcwd(),
-            setting_sources=setting_sources
+            setting_sources=setting_sources,
+            plugins=plugin_specs  # Add loaded plugins
         )
         self.client: Optional[ClaudeSDKClient] = None
         self.connected = False

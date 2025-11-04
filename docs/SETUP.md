@@ -327,6 +327,126 @@ runtime_env:
 
 ---
 
+## Plugin Marketplaces
+
+This template uses a **plugin-based architecture** for commands, agents, and skills.
+
+### Understanding Plugins
+
+**What are plugins?**
+- Reusable packages containing commands, agents, skills, hooks, and MCP servers
+- Distributed via marketplace repositories
+- Automatically installed by Claude Code CLI
+
+**Two marketplaces**:
+
+1. **cc-marketplace-developers** (Development tools)
+   - Repository: `plan-net/cc-marketplace-developers`
+   - Installed: On your local machine by Claude Code CLI
+   - Examples: `general`, `claude-agent-sdk`
+
+2. **cc-marketplace-agents** (Runtime capabilities)
+   - Repository: `plan-net/cc-marketplace-agents`
+   - Installed: Baked into container images
+   - Provides: `/cc-setup`, `/cc-deploy`, `/cc-shutdown`
+   - Examples: `master-core`, `hitl-example`
+
+### How Plugins Are Installed
+
+**Local development (automatic)**:
+1. Marketplaces declared in `.claude/settings.json`
+2. Claude Code CLI auto-installs on restart
+3. Plugins available immediately
+
+**Container deployment (build time)**:
+1. Same settings in config repositories
+2. Build script clones marketplaces and copies plugins
+3. Plugins baked into container at `/app/plugins/`
+4. Runtime loads plugins automatically
+
+### Current Configuration
+
+The template comes pre-configured with essential plugins in `.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "cc-marketplace-developers": {
+      "source": {"source": "github", "repo": "plan-net/cc-marketplace-developers"}
+    },
+    "cc-marketplace-agents": {
+      "source": {"source": "github", "repo": "plan-net/cc-marketplace-agents"}
+    }
+  },
+  "enabledPlugins": {
+    "general@cc-marketplace-developers": true,
+    "claude-agent-sdk@cc-marketplace-developers": true,
+    "master-core@cc-marketplace-agents": true
+  }
+}
+```
+
+**What this enables**:
+- `/cc-setup` - Guided setup automation
+- `/cc-deploy` - Intelligent deployment
+- `/cc-shutdown` - Clean service shutdown
+- `docker-build` - Container image building
+- `prerequisite-check` - Dependency validation
+- `vm-setup` - OrbStack VM creation
+
+### First Time Plugin Installation
+
+**After cloning the repository**:
+
+1. **Open Claude Code**:
+   ```bash
+   cd cc-hitl-template
+   claude
+   ```
+
+2. **Plugins install automatically** on first launch
+   - Claude Code reads `.claude/settings.json`
+   - Downloads marketplaces from GitHub
+   - Installs enabled plugins
+   - Shows progress in status bar
+
+3. **Verify plugins installed**:
+   ```bash
+   # Check available commands
+   /cc-setup    # Should show setup agent
+   /cc-deploy   # Should show deployment agent
+   /cc-shutdown # Should show shutdown command
+   ```
+
+**If plugins don't install**:
+- Ensure `.claude/settings.json` exists
+- Check GitHub access (marketplace repos must be accessible)
+- Restart Claude Code: `Cmd/Ctrl + Q` then relaunch
+
+### Managing Plugins
+
+See [PLUGINS.md](PLUGINS.md) for:
+- Adding custom marketplaces
+- Enabling/disabling plugins
+- Creating custom plugins
+- Troubleshooting plugin issues
+
+### Understanding the Container Image
+
+When you build the Docker image, plugins are baked in with this structure:
+
+- **Master config**: `/app/template_user/.claude/` (from master config repo)
+- **Project config**: `/app/.claude/` (from project config repo)
+- **Plugins**: `/app/plugins/{marketplace}/plugins/{plugin}/`
+- **Environment**: `HOME=/app/template_user` (so SDK finds master settings)
+- **Ownership**: All owned by `ray:users` for Ray actor access
+
+This immutable structure ensures consistent behavior across deployments. To change plugins, rebuild the image with updated settings.json.
+
+For complete container layout, see [PLUGINS.md#container-folder-structure](PLUGINS.md#container-folder-structure).
+
+---
+
 ## Platform-Specific Setup
 
 ### macOS: OrbStack VM Setup
@@ -374,26 +494,36 @@ sudo usermod -aG docker $USER
 
 ### Check All Prerequisites
 
-Run the prerequisite check skill:
+The `/cc-setup` command includes prerequisite checking. For manual verification:
 
+**Using Claude Code** (recommended):
 ```bash
-bash .claude/skills/prerequisite-check/scripts/check.sh
+# In Claude Code
+/cc-setup
+# The setup agent will analyze and report all prerequisites
 ```
 
-Expected output:
-```
-=== PREREQUISITE CHECK ===
-[✓] Python 3.12+: 3.12.9 installed
-[✓] Git: 2.45.0 installed
-[✓] Node.js 18+: 18.20.0 installed
-[✓] Claude CLI: 1.0.0 installed
-[✓] Homebrew: 4.2.0 installed (macOS)
-[✓] Podman: 5.0.0 installed (macOS)
-[✓] OrbStack: 1.5.0 installed (macOS)
+**Manual check**:
+```bash
+# Verify Python
+python3.12 --version
 
-=== SUMMARY ===
-Status: COMPLETE
-All prerequisites are installed and ready!
+# Verify Git
+git --version
+
+# Verify Node.js
+node --version
+
+# Verify Claude CLI
+claude --version
+
+# macOS specific
+brew --version
+podman --version
+orb version
+
+# Linux specific
+docker --version
 ```
 
 ### Test Python Environment

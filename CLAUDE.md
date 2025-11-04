@@ -39,6 +39,131 @@ Essential context for Claude Code when working with this repository.
 
 ---
 
+## Plugin Architecture
+
+This template uses a **plugin-based architecture** with two marketplaces providing reusable capabilities:
+
+### Marketplaces
+
+**cc-marketplace-developers** (Development-time plugins)
+- Repository: `plan-net/cc-marketplace-developers`
+- Purpose: Tools for setup, deployment, testing
+- Installed on: Developer machine (Claude Code CLI)
+- Examples: `general`, `claude-agent-sdk`
+
+**cc-marketplace-agents** (Runtime plugins)
+- Repository: `plan-net/cc-marketplace-agents`
+- Purpose: Runtime capabilities for deployed HITL agents
+- Installed in: Container images (baked at build time)
+- Examples: `master-core`, `hitl-example`
+
+### How Plugins Work
+
+**Local Development (Claude Code CLI)**:
+1. Marketplaces declared in `.claude/settings.json` (`extraKnownMarketplaces`)
+2. Plugins enabled in `.claude/settings.json` (`enabledPlugins`)
+3. Claude Code CLI auto-installs on restart
+4. Plugins available to main agent immediately
+5. Location: `~/.cache/claude-code/plugins/`
+
+**Container Deployment (Ray Actors)**:
+1. Same settings in config repos (master + project)
+2. `build.sh` reads settings → clones marketplaces → copies plugins
+3. Dockerfile bakes plugins into image at `/app/plugins/{marketplace}/plugins/{plugin}/`
+4. `agent.py` loads plugins at runtime via `ClaudeAgentOptions(plugins=[...])`
+5. Plugins available to containerized Claude agents
+
+### Plugin Settings Resolution
+
+The SDK uses a three-tier settings hierarchy:
+
+```python
+ClaudeAgentOptions(
+    setting_sources=["user", "project", "local"]
+)
+```
+
+**In containers**:
+- **"user"** → `$HOME/.claude/` = `/app/template_user/.claude/` (master config repo)
+- **"project"** → `{cwd}/.claude/` = `/app/.claude/` (project config repo)
+- **"local"** → Runtime overrides (not used in this template)
+
+Project settings override master settings. This allows:
+- Master config: Template-level defaults (user/organization plugins)
+- Project config: Project-specific plugins (overrides master)
+
+### Enabled Plugins
+
+Current configuration in `.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "cc-marketplace-developers": {
+      "source": {"source": "github", "repo": "plan-net/cc-marketplace-developers"}
+    },
+    "cc-marketplace-agents": {
+      "source": {"source": "github", "repo": "plan-net/cc-marketplace-agents"}
+    }
+  },
+  "enabledPlugins": {
+    "general@cc-marketplace-developers": true,
+    "claude-agent-sdk@cc-marketplace-developers": true,
+    "master-core@cc-marketplace-agents": true
+  }
+}
+```
+
+### Adding Custom Plugins
+
+**To add a new marketplace**:
+1. Add to `.claude/settings.json`:
+```json
+"extraKnownMarketplaces": {
+  "my-marketplace": {
+    "source": {"source": "github", "repo": "org/repo"}
+  }
+}
+```
+
+**To enable a plugin**:
+1. Add to `.claude/settings.json`:
+```json
+"enabledPlugins": {
+  "my-plugin@my-marketplace": true
+}
+```
+
+2. For development: Restart Claude Code CLI
+3. For deployment: Rebuild container image (`/cc-deploy` will detect config change)
+
+### Plugin Migration
+
+Commands, skills, and agents previously in `.claude/` are now plugins:
+
+| Old Location | New Location | Marketplace | Plugin |
+|--------------|--------------|-------------|--------|
+| `.claude/commands/cc-setup.md` | `master-core` | cc-marketplace-agents | `/cc-setup` |
+| `.claude/commands/cc-deploy.md` | `master-core` | cc-marketplace-agents | `/cc-deploy` |
+| `.claude/commands/cc-shutdown.md` | `master-core` | cc-marketplace-agents | `/cc-shutdown` |
+| `.claude/agents/setup.md` | `master-core` | cc-marketplace-agents | Setup agent |
+| `.claude/agents/deployment.md` | `master-core` | cc-marketplace-agents | Deployment agent |
+| `.claude/skills/docker-build/` | `master-core` | cc-marketplace-agents | docker-build skill |
+| `.claude/skills/prerequisite-check/` | `master-core` | cc-marketplace-agents | prerequisite-check skill |
+| `.claude/skills/vm-setup/` | `master-core` | cc-marketplace-agents | vm-setup skill |
+
+All functionality remains the same - just distributed via plugins.
+
+### Benefits
+
+**Reusability**: Share plugins across multiple projects
+**Versioning**: Pin to specific marketplace commits
+**Separation**: Template code vs operational tooling
+**Modularity**: Enable/disable capabilities per project
+**Maintainability**: Update plugins independently
+
+---
+
 ## Commands
 
 ### Claude Code Slash Commands
@@ -198,7 +323,7 @@ Docker images bake multiple `.claude/` sources:
 ```dockerfile
 # Baked into image at build time
 COPY template_user/.claude /app/template_user/.claude  # Master config
-COPY project/.claude /app/project/.claude              # Project config
+COPY project/.claude /app/.claude                      # Project config
 ENV HOME=/app/template_user  # "user" settings load from master
 ```
 
@@ -207,10 +332,45 @@ ENV HOME=/app/template_user  # "user" settings load from master
 ClaudeAgentOptions(
     setting_sources=["user", "project", "local"]
     # user = $HOME/.claude (master config)
-    # project = project/.claude
-    # local = cwd/.claude (deployment-specific)
+    # project = {cwd}/.claude (project config)
+    # local = runtime overrides (not used in this template)
 )
 ```
+
+### Container Folder Structure
+
+Docker images contain this complete folder layout:
+
+```
+/app/
+├── template_user/.claude/          # Master config (user-level)
+│   ├── settings.json               # Marketplaces + enabled plugins
+│   └── CLAUDE.md                   # Master instructions
+│
+├── .claude/                        # Project config (project-specific)
+│   ├── settings.json               # Project overrides
+│   └── CLAUDE.md                   # Project instructions
+│
+├── plugins/                        # Baked marketplace plugins
+│   ├── cc-marketplace-developers/
+│   │   └── plugins/
+│   │       ├── general/
+│   │       └── claude-agent-sdk/
+│   └── cc-marketplace-agents/
+│       └── plugins/
+│           ├── master-core/        # /cc-setup, /cc-deploy, etc.
+│           └── hitl-example/
+│
+└── claude_hitl_template/           # Application code
+    ├── agent.py
+    └── query.py
+```
+
+**Key details**:
+- **HOME=/app/template_user**: SDK's "user" settings load from master config
+- **Ownership**: All config directories owned by `ray:users` for proper permissions
+- **Plugins**: Baked at build time from marketplace repos
+- **Settings merge**: Project overrides master (via `setting_sources=["user", "project", "local"]`)
 
 ---
 
@@ -223,6 +383,7 @@ claude_hitl_template/
 ├── agent.py (282 lines)      # All Claude SDK logic + Ray Actors
 │                              # - ClaudeSessionActor class
 │                              # - create_actor, get_actor, cleanup_actor
+│                              # - Plugin loading functions
 │                              # - Pure business logic
 │
 └── query.py (276 lines)       # Kodosumi HITL orchestration only
@@ -232,23 +393,20 @@ claude_hitl_template/
                                # - No Claude SDK logic here
 
 .claude/
-├── agents/                    # Autonomous agents
-│   ├── deployment.md          # Deployment orchestration
-│   └── setup.md               # Setup automation
+├── CLAUDE.md                  # Project-specific instructions
+├── settings.json              # Marketplace + plugin config
+│                              # - extraKnownMarketplaces
+│                              # - enabledPlugins
+│                              # - permissions (auto-approvals)
 │
-├── skills/                    # Reusable capabilities
-│   ├── docker-build/          # Build Docker images
-│   ├── prerequisite-check/    # Validate dependencies
-│   └── vm-setup/              # Create OrbStack VM
-│
-├── commands/                  # Slash commands
-│   ├── cc-deploy.md           # Triggers deployment agent
-│   ├── cc-setup.md            # Triggers setup agent
-│   └── cc-shutdown.md         # Simple shutdown
-│
-├── settings.json              # Auto-approval permissions
 ├── .last-deploy-state.json    # Deployment state (gitignored)
 └── .setup-state.json          # Setup state (gitignored)
+
+# Commands, agents, and skills now come from plugins:
+# - Installed via settings.json marketplace declarations
+# - Development: Auto-installed by Claude Code CLI
+# - Deployment: Baked into container at /app/plugins/
+# See "Plugin Architecture" section above for details
 
 data/config/
 ├── config.yaml                        # Global Ray Serve config
@@ -284,19 +442,28 @@ user_input = await tracer.lease(
 ```
 
 ### Create New Autonomous Operation
-1. **Agent**: `.claude/agents/my-agent.md` (orchestration logic)
-2. **Skill** (optional): `.claude/skills/my-skill/` (reusable capability)
-3. **Command**: `.claude/commands/my-command.md` (entry point)
-4. **Permissions**: Update `.claude/settings.json`
 
-**Pattern to follow**: See deployment agent + docker-build skill as reference.
+**For project-specific operations** (not shared across projects):
+1. Create plugin in marketplace repo or local `.claude/` directory
+2. **Agent**: `agents/my-agent.md` (orchestration logic)
+3. **Skill** (optional): `skills/my-skill/` (reusable capability)
+4. **Command**: `commands/my-command.md` (entry point)
+5. **Permissions**: Update `settings.json`
+
+**For shared operations** (reusable across projects):
+1. Create plugin in your marketplace repository
+2. Follow marketplace plugin structure
+3. Add marketplace to `settings.json` (`extraKnownMarketplaces`)
+4. Enable plugin in `settings.json` (`enabledPlugins`)
+
+**Pattern to follow**: See `master-core@cc-marketplace-agents` plugin structure.
 
 ### Skill Structure Pattern
 
 Each skill follows this standard structure:
 
 ```
-.claude/skills/<skill-name>/
+skills/<skill-name>/
 ├── SKILL.md              # Documentation (frontmatter + usage)
 └── scripts/
     └── <script-name>.sh  # Executable scripts
@@ -309,13 +476,13 @@ Each skill follows this standard structure:
 - Allows multiple scripts per skill if needed
 - Makes it easy to add tests/ or lib/ folders later
 
-**Example:**
+**Example (in marketplace or local .claude/)**:
 ```bash
 # Create new skill structure
-mkdir -p .claude/skills/my-skill/scripts
-touch .claude/skills/my-skill/SKILL.md
-touch .claude/skills/my-skill/scripts/run.sh
-chmod +x .claude/skills/my-skill/scripts/run.sh
+mkdir -p skills/my-skill/scripts
+touch skills/my-skill/SKILL.md
+touch skills/my-skill/scripts/run.sh
+chmod +x skills/my-skill/scripts/run.sh
 ```
 
 ### Add Configuration

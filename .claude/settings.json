@@ -1,4 +1,23 @@
 {
+  "extraKnownMarketplaces": {
+    "cc-marketplace-developers": {
+      "source": {
+        "source": "github",
+        "repo": "plan-net/cc-marketplace-developers"
+      }
+    },
+    "cc-marketplace-agents": {
+      "source": {
+        "source": "github",
+        "repo": "plan-net/cc-marketplace-agents"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "general@cc-marketplace-developers": true,
+    "claude-agent-sdk@cc-marketplace-developers": true,
+    "master-core@cc-marketplace-agents": true
+  },
   "permissions": {
     "allow": [
       "WebFetch",

@@ -8,6 +8,7 @@ Build production-ready conversational AI agents with:
 - ✅ **Back-and-forth conversations** with Claude via HITL interface
 - ✅ **Persistent sessions** across interactions using Ray Actors
 - ✅ **Container isolation** for security and configuration management
+- ✅ **Plugin-based architecture** for reusable capabilities
 - ✅ **Autonomous operations** with Sub-Agent + Skills pattern
 - ✅ **One-command setup** via `/cc-setup` in Claude Code
 
@@ -87,7 +88,51 @@ All powered by **Sub-Agent + Skills** pattern for autonomous, context-aware oper
 
 **Why containers?** Security isolation, configuration layering (master + project configs), and reproducible environments. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
-**Why OrbStack on macOS?** Ray's container networking requires native Linux. Podman on macOS uses QEMU which breaks Ray's `127.0.0.1` assumptions. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#why-macos-needs-orbstack).
+**Why OrbStack on macOS?** Ray's container networking requires native Linux. Podman on macOS uses QEMU which breaks Ray's `127.0.0.1` assumptions.
+
+---
+
+## Plugin Architecture
+
+This template uses a **plugin-based architecture** for organizing reusable capabilities:
+
+### Marketplaces
+
+Two plugin marketplaces provide different types of capabilities:
+
+**🛠️ cc-marketplace-developers** (Development plugins)
+- Repository: `plan-net/cc-marketplace-developers`
+- Purpose: Tools for development, setup, and testing
+- Installed on: Developer machine (Claude Code CLI)
+- Examples: `general`, `claude-agent-sdk`
+
+**🤖 cc-marketplace-agents** (Runtime plugins)
+- Repository: `plan-net/cc-marketplace-agents`
+- Purpose: Runtime capabilities for deployed agents
+- Installed in: Container images (baked at build time)
+- Examples: `master-core` (provides `/cc-setup`, `/cc-deploy`, `/cc-shutdown`)
+
+### How It Works
+
+**Local Development**:
+- Plugins declared in `.claude/settings.json`
+- Claude Code CLI automatically installs on restart
+- Available immediately to the main agent
+
+**Container Deployment**:
+- Same settings in config repositories
+- Build process bakes plugins into container image
+- Runtime loads plugins from `/app/plugins/` directory
+
+### Benefits
+
+- **Reusability**: Share commands, agents, and skills across projects
+- **Versioning**: Pin to specific marketplace commits
+- **Modularity**: Enable/disable capabilities per project
+- **Separation**: Template code vs operational tooling
+- **Maintainability**: Update plugins independently
+
+See **[CLAUDE.md](CLAUDE.md#plugin-architecture)** and **[docs/PLUGINS.md](docs/PLUGINS.md)** for complete plugin guide.
 
 ---
 
@@ -163,14 +208,15 @@ See [docs/DAILY_WORKFLOW.md](docs/DAILY_WORKFLOW.md) for complete daily workflow
 - **[Daily Workflow](docs/DAILY_WORKFLOW.md)** - Day-to-day development guide
 
 ### Reference
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and rationale
-- **[Reference](docs/REFERENCE.md)** - Commands, configs, patterns, FAQ
+- **[Plugin Guide](docs/PLUGINS.md)** - Plugin system and marketplace usage
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Error solutions
+- **[Reference](docs/REFERENCE.md)** - Commands, configs, patterns, FAQ
 - **[Known Issues](docs/KNOWN_ISSUES.md)** - SDK bugs and workarounds
 
 ### Development
 - **[Development Guide](docs/DEVELOPMENT.md)** - Extending the template
 - **[Deployment Guide](docs/DEPLOYMENT.md)** - Production deployment
+- **[Architecture](docs/ARCHITECTURE.md)** - System design and rationale
 
 ---
 
@@ -193,11 +239,13 @@ Autonomous operations with intelligent decision-making:
 
 ### Configuration Layers
 Docker images bake multiple `.claude/` configuration sources:
-- **Master config** (`template_user/.claude/`): Template-level settings
-- **Project config** (`project/.claude/`): Deployment-specific settings
+- **Master config** (`/app/template_user/.claude/`): Template-level settings
+- **Project config** (`/app/.claude/`): Deployment-specific settings
+- **Plugins** (`/app/plugins/`): Baked marketplace plugins
 - **Settings merge**: `setting_sources=["user", "project", "local"]`
+- **Environment**: `HOME=/app/template_user` for SDK settings resolution
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design details.
+See [CLAUDE.md#container-folder-structure](CLAUDE.md#container-folder-structure) and [docs/PLUGINS.md#container-folder-structure](docs/PLUGINS.md#container-folder-structure) for complete container layout.
 
 ---
 
@@ -206,22 +254,27 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design details.
 ```
 cc-hitl-template/
 ├── claude_hitl_template/
-│   ├── agent.py             # Ray Actor + Claude SDK (282 lines)
-│   └── query.py             # Kodosumi HITL orchestration (276 lines)
+│   ├── agent.py             # Ray Actor + Claude SDK + Plugin loading
+│   └── query.py             # Kodosumi HITL orchestration
 ├── .claude/
-│   ├── agents/              # Autonomous agents (deployment, setup)
-│   ├── skills/              # Reusable capabilities
-│   ├── commands/            # Slash commands (/cc-setup, /cc-deploy, /cc-shutdown)
-│   └── settings.json        # Auto-approval permissions
+│   ├── CLAUDE.md            # Project-specific instructions
+│   └── settings.json        # Marketplace config + auto-approvals
 ├── data/config/
 │   ├── config.yaml          # Global Ray Serve config
 │   └── claude_hitl_template.yaml  # Service deployment config
 ├── docs/                    # Documentation
+│   ├── SETUP.md             # Installation guide
+│   ├── PLUGINS.md           # Plugin system guide
+│   └── ...                  # Additional docs
 ├── tests/                   # Test suite
 ├── Dockerfile               # Container image definition
-├── build-and-push.sh        # Image build script
 ├── justfile                 # Task automation commands
 └── README.md                # This file
+
+# Commands, agents, and skills now provided via plugins:
+# - Installed from cc-marketplace-developers (dev tools)
+# - Installed from cc-marketplace-agents (runtime capabilities)
+# See "Plugin Architecture" section above
 ```
 
 ---
@@ -249,11 +302,17 @@ user_input = await tracer.lease(
 ```
 
 ### Create New Autonomous Operation
-1. Create agent: `.claude/agents/my-agent.md`
-2. Create skills if needed: `.claude/skills/my-skill/`
-3. Create command: `.claude/commands/my-command.md`
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for complete guide.
+**For project-specific operations**:
+1. Create in local `.claude/` directory or project marketplace
+2. Follow plugin structure (commands/, agents/, skills/)
+
+**For shared/reusable operations**:
+1. Create plugin in your marketplace repository
+2. Add marketplace to `.claude/settings.json`
+3. Enable plugin in `.claude/settings.json`
+
+See [CLAUDE.md](CLAUDE.md#when-extending) and [docs/PLUGINS.md](docs/PLUGINS.md) for complete guide.
 
 ---
 
