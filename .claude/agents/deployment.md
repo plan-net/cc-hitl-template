@@ -136,14 +136,49 @@ just local-stop-services  # Stop koco processes
 just local-logs          # View logs
 ```
 
-**Docker Build:**
+**Container Build:**
 
-When a Docker image rebuild is needed, describe the requirement clearly:
-- "Build a Docker image with the latest configurations from git repos"
+When a container image rebuild is needed, describe the requirement clearly:
+- "Build a container image with the latest configurations from git repos"
 - The docker-build skill will activate automatically
-- Skill returns: MASTER_CONFIG_COMMIT, PROJECT_CONFIG_COMMIT, DOCKER_IMAGE_TAG, DOCKER_IMAGE_DIGEST, IMAGE_SIZE, BUILD_TIMESTAMP
+- Skill returns: MASTER_CONFIG_COMMIT, PROJECT_CONFIG_COMMIT, CONTAINER_IMAGE_URI, IMAGE_SIZE, BUILD_TIMESTAMP
 
 Parse the skill output from the `=== DEPLOYMENT STATE ===` section.
+
+**CRITICAL: After successful build, you MUST update configuration files:**
+
+1. **Extract `CONTAINER_IMAGE_URI` from build output**
+   - Format: `ghcr.io/<username>/claude-hitl-worker@sha256:<full-digest>`
+
+2. **Update `.env` file** using Edit tool:
+   ```bash
+   CONTAINER_IMAGE_URI=<value-from-build-output>
+   ```
+
+3. **Update `data/config/claude_hitl_template.yaml`** using Edit tool:
+   ```yaml
+   runtime_env:
+     env_vars:
+       CONTAINER_IMAGE_URI: "<value-from-build-output>"
+   ```
+
+4. **Verify both files match** using Read tool - they must have identical `CONTAINER_IMAGE_URI` values
+
+5. **Block deployment if mismatch** detected between:
+   - Build output
+   - `.env` file
+   - `yaml` file
+
+**Why both files?**
+- `.env` → Read by agent.py at runtime (Python code via `os.getenv()`)
+- `yaml` → Read by Ray Serve (makes env vars available to serve application)
+- Both must contain identical **LITERAL VALUES** for consistent runtime configuration
+- YAML does NOT support shell variable substitution like `${VAR_NAME}`
+
+**CRITICAL**: ALL values in `runtime_env.env_vars` must be literal:
+- `CONTAINER_IMAGE_URI` - Full URI with digest
+- `ANTHROPIC_API_KEY` - Actual sk-ant-... key, NOT `"${ANTHROPIC_API_KEY}"`
+- Copy exact values from `.env` to the YAML file
 
 **Complete Workflows:**
 ```bash
@@ -169,7 +204,7 @@ just orb-down  # Stop everything
 Show detailed reasoning for why rebuild is needed:
 
 ```
-🔍 Docker image rebuild required
+🔍 Container image rebuild required
 
 Remote config changes detected:
 - cc-master-agent-config: 3 new commits since last deploy
@@ -180,16 +215,16 @@ Remote config changes detected:
 
 - cc-example-agent-config: Up to date (no changes)
 
-Current image: ghcr.io/<username>/claude-hitl-worker:latest
+Current image: ghcr.io/<username>/claude-hitl-worker@sha256:old123...
               Built: 2 days ago
-              Digest: sha256:old123...
 
 Rebuild will:
 1. Clone latest configs from both repos (~10 seconds)
-2. Build new Docker image (~3-5 minutes)
+2. Build new container image (~3-5 minutes)
 3. Push to ghcr.io registry (~30 seconds)
-4. Deploy updated image to Ray cluster
-5. Verify Ray actors using new image
+4. Update .env and yaml config with new image URI
+5. Deploy updated image to Ray cluster
+6. Verify Ray actors using new image
 
 New image will contain:
 - Master config: <new-commit-hash> (+3 commits)
@@ -210,12 +245,13 @@ After successful deployment, update `.claude/.last-deploy-state.json`:
   "timestamp": "2025-11-03T12:30:00Z",
   "master_config_commit": "<captured from build skill output>",
   "project_config_commit": "<captured from build skill output>",
-  "docker_image_tag": "ghcr.io/<username>/claude-hitl-worker:latest",
-  "docker_image_digest": "sha256:abc123def456...",
+  "container_image_uri": "ghcr.io/<username>/claude-hitl-worker@sha256:abc123def456...",
   "build_timestamp": "2025-11-03T12:28:45Z",
   "code_commit": "<git rev-parse HEAD>"
 }
 ```
+
+**Important:** The `container_image_uri` must match what's in both `.env` and `yaml` files.
 
 **When to Update:**
 - After successful Docker build (capture all fields from build skill output)

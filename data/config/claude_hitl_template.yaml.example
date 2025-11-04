@@ -6,11 +6,21 @@ route_prefix: /claude-hitl
 import_path: claude_hitl_template.query:fast_app
 
 # Runtime environment configuration
-# Note: Dependencies are installed in the venv, so no runtime_env needed
-# Uncomment below if you need to add environment variables
-# runtime_env:
-#   env_vars:
-#     MY_API_KEY: "your-key-here"
+# Environment variables made available to the Ray Serve application
+# IMPORTANT: All values must be LITERAL VALUES copied from .env
+# Ray Serve YAML does NOT support variable substitution like ${VAR_NAME}
+runtime_env:
+  env_vars:
+    # Container image URI with digest for Ray actors
+    # Copy the exact value from CONTAINER_IMAGE_URI in .env
+    # Format: ghcr.io/<username>/claude-hitl-worker@sha256:<full-digest>
+    CONTAINER_IMAGE_URI: "ghcr.io/your-github-username/claude-hitl-worker@sha256:...your-digest-here..."
+
+    # Claude API key - REQUIRED
+    # Copy the EXACT literal value from ANTHROPIC_API_KEY in .env
+    # Must be the actual sk-ant-... key, NOT a variable reference like ${ANTHROPIC_API_KEY}
+    # Ray Serve YAML does NOT support variable substitution
+    ANTHROPIC_API_KEY: "sk-ant-...copy-your-actual-key-from-env-file..."
 
 # Ray Serve deployment configuration
 # Adjust these based on your resource requirements

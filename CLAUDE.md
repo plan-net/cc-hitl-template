@@ -295,6 +295,21 @@ user_input = await tracer.lease(
 **Development**: `data/config/claude_hitl_template.yaml.example`
 **Deployment**: User copies to `claude_hitl_template.yaml` and customizes
 
+**IMPORTANT**: YAML configuration files require literal values, not variable references.
+
+Ray Serve YAML does NOT support shell variable substitution:
+- ✗ **Wrong**: `ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"`
+- ✓ **Correct**: `ANTHROPIC_API_KEY: "sk-ant-your-actual-key-here"`
+
+All values in `runtime_env.env_vars` must be copied exactly from `.env` file as literal strings. This applies to:
+- `ANTHROPIC_API_KEY` - Copy the actual sk-ant-... key
+- `CONTAINER_IMAGE_URI` - Copy the full URI with digest
+
+**Why both files?**
+- `.env` → Read by Python code via `os.getenv()` (shell environment)
+- `yaml` → Read by Ray Serve to configure runtime environment (YAML parser, no shell expansion)
+- Both must contain identical literal values for consistent configuration
+
 ---
 
 ## Critical Known Issues

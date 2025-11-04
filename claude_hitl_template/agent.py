@@ -27,6 +27,39 @@ from claude_agent_sdk import (
 )
 
 
+def get_container_image_config() -> dict:
+    """
+    Get container image configuration from environment.
+
+    Returns:
+        {
+            "uri": "ghcr.io/user/image@sha256:...",  # Full URI with digest
+            "registry_path": "ghcr.io/user/image",     # Without digest
+            "digest": "sha256:...",                     # Just the digest
+            "use_container": bool                       # Whether to use containers
+        }
+    """
+    image_uri = os.getenv("CONTAINER_IMAGE_URI", "")
+
+    # Container mode is enabled if image URI is configured
+    use_container = bool(image_uri)
+
+    # Parse digest from URI if present (format: image@sha256:...)
+    registry_path = ""
+    digest = ""
+    if image_uri and "@" in image_uri:
+        registry_path, digest = image_uri.split("@", 1)
+    elif image_uri:
+        registry_path = image_uri
+
+    return {
+        "uri": image_uri,
+        "registry_path": registry_path,
+        "digest": digest,
+        "use_container": use_container
+    }
+
+
 @ray.remote
 class ClaudeSessionActor:
     """
@@ -265,7 +298,7 @@ class ClaudeSessionActor:
 
 # Helper functions for actor management
 
-def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: bool = False) -> ray.actor.ActorHandle:
+def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Optional[bool] = None) -> ray.actor.ActorHandle:
     """
     Create a new ClaudeSessionActor with unique name.
 
@@ -279,8 +312,9 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: bo
     Args:
         execution_id: Unique identifier for this conversation
         cwd: Working directory for Claude SDK (default: current dir)
-        use_container: If True, run actor in container with isolated .claude folders
-                      (requires image: claude-hitl-worker:latest locally or from ghcr.io)
+        use_container: If True, run actor in container with isolated .claude folders.
+                      If None (default), auto-detects from CONTAINER_IMAGE_URI env var.
+                      Requires image URI with digest in environment configuration.
 
     Returns:
         Ray actor handle
@@ -292,22 +326,30 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: bo
     # Get project root
     project_root = cwd or os.getcwd()
 
+    # Get container image configuration from environment
+    image_config = get_container_image_config()
+
+    # Auto-detect container usage from environment if not explicitly set
+    if use_container is None:
+        use_container = image_config["use_container"]
+
     # Build runtime environment
     if use_container:
         # Container isolation for .claude/ folders:
-        # - cc-master-agent-config/.claude/ is baked into the image (template/user-level config)
-        # - cc-example-agent-config/.claude/ is baked into the image (project-specific config)
+        # - Master config .claude/ is baked into the image (template/user-level config)
+        # - Project config .claude/ is baked into the image (project-specific config)
         # Ray's image_uri can only be used with env_vars (no 'container' field or volume mounts)
         #
-        # Image options:
-        #  1. Local build: "claude-hitl-worker:latest" (requires building locally)
-        #  2. GitHub registry: "ghcr.io/<username>/claude-hitl-worker:latest" (see build-and-push.sh)
+        # Image URI must include digest for immutable reference:
+        # Format: ghcr.io/<username>/claude-hitl-worker@sha256:<digest>
         runtime_env = RuntimeEnv(
-            image_uri="ghcr.io/plan-net/claude-hitl-worker:latest",  # Container registry image with baked configs
+            image_uri=image_config["uri"],  # Full URI with digest from CONTAINER_IMAGE_URI env var
             env_vars={
                 "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
+                "CONTAINER_IMAGE_URI": image_config["uri"],      # Pass to actor for logging
+                "CONTAINER_IMAGE_DIGEST": image_config["digest"], # Pass digest for validation
                 # HOME is set to /app/template_user in Dockerfile
-                # This makes "user" settings load from cc-master-agent-config/.claude/
+                # This makes "user" settings load from master config .claude/
             }
         )
         # Ray will deploy code to container, actor runs in that context

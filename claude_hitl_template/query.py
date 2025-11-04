@@ -18,7 +18,7 @@ from kodosumi.core import forms as F
 from kodosumi import dtypes
 from ray import serve
 from datetime import datetime
-from .agent import create_actor, get_actor, cleanup_actor
+from .agent import create_actor, get_actor, cleanup_actor, get_container_image_config
 
 # Configuration
 CONVERSATION_TIMEOUT_SECONDS = 600  # 10 minutes
@@ -186,14 +186,38 @@ async def run_conversation(inputs: dict, tracer: Tracer):
     execution_id = inputs.get("execution_id", str(uuid.uuid4()))
     prompt = inputs["prompt"]
 
-    # Show initial status
-    await tracer.markdown(f"""
+    # Get container image configuration for visibility
+    image_config = get_container_image_config()
+
+    # Build initialization message with image info
+    init_message = f"""
 ## Conversation Started
 **Timestamp:** {inputs["timestamp"]}
 **Execution ID:** {execution_id}
 
-Initializing Claude Agent SDK...
-    """)
+"""
+
+    # Add container image info if using containers
+    if image_config["use_container"]:
+        # Truncate digest for readability (first 12 + last 6 chars)
+        digest = image_config["digest"]
+        if digest and len(digest) > 25:
+            digest_display = f"{digest[:19]}...{digest[-6:]}"
+        else:
+            digest_display = digest or "unknown"
+
+        init_message += f"""### Container Image Configuration
+**Registry Path:** `{image_config["registry_path"]}`
+**Digest:** `{digest_display}` (SHA256)
+
+This conversation will run in a containerized Ray Actor with baked `.claude` configurations.
+
+"""
+
+    init_message += "Initializing Claude Agent SDK...\n"
+
+    # Show initial status
+    await tracer.markdown(init_message)
 
     retry_count = 0
     max_retries = 1

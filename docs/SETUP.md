@@ -295,6 +295,36 @@ echo "API Key: ${ANTHROPIC_API_KEY:0:10}..."
 echo "GitHub User: $GITHUB_USERNAME"
 ```
 
+### 4. Update YAML Configuration
+
+**IMPORTANT**: The `.env` file is for shell environment and Python code. You must ALSO update the Ray Serve YAML configuration with the same literal values:
+
+```bash
+# Edit the yaml file
+nano data/config/claude_hitl_template.yaml
+
+# Or if you copied from the example, first:
+cp data/config/claude_hitl_template.yaml.example data/config/claude_hitl_template.yaml
+nano data/config/claude_hitl_template.yaml
+```
+
+**Update these values in the YAML file**:
+```yaml
+runtime_env:
+  env_vars:
+    # Copy your ACTUAL API key from .env (the sk-ant-... value)
+    ANTHROPIC_API_KEY: "sk-ant-your-actual-key-here"
+
+    # Container image URI will be set after building image
+    CONTAINER_IMAGE_URI: "ghcr.io/your-username/claude-hitl-worker@sha256:..."
+```
+
+**Critical notes**:
+- Use the ACTUAL API key value, not `"${ANTHROPIC_API_KEY}"`
+- Ray Serve YAML does NOT support variable substitution like `${VAR}`
+- Both `.env` and `yaml` files must have the SAME literal values
+- The YAML file is read by Ray Serve to configure the runtime environment
+
 ---
 
 ## Platform-Specific Setup
