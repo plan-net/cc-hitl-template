@@ -44,7 +44,7 @@ This determines whether to check for OrbStack (macOS) or Docker (Linux).
 Run the prerequisite check skill:
 
 ```bash
-bash .claude/skills/prerequisite-check/check.sh
+bash .claude/skills/prerequisite-check/scripts/check.sh
 ```
 
 This checks:

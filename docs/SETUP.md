@@ -377,7 +377,7 @@ sudo usermod -aG docker $USER
 Run the prerequisite check skill:
 
 ```bash
-bash .claude/skills/prerequisite-check/check.sh
+bash .claude/skills/prerequisite-check/scripts/check.sh
 ```
 
 Expected output:

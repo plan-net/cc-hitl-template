@@ -34,7 +34,7 @@ Creates and configures an OrbStack Linux VM with all required dependencies for r
 ## Execution
 
 ```bash
-bash .claude/skills/vm-setup/setup-vm.sh
+bash .claude/skills/vm-setup/scripts/setup-vm.sh
 ```
 
 ## Prerequisites
@@ -90,7 +90,7 @@ Next steps:
 if [ "$(uname -s)" = "Darwin" ]; then
     echo "Setting up OrbStack VM for Ray cluster..."
 
-    if bash .claude/skills/vm-setup/setup-vm.sh; then
+    if bash .claude/skills/vm-setup/scripts/setup-vm.sh; then
         echo "✅ VM setup complete"
         # Proceed with syncing code
     else

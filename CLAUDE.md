@@ -291,6 +291,33 @@ user_input = await tracer.lease(
 
 **Pattern to follow**: See deployment agent + docker-build skill as reference.
 
+### Skill Structure Pattern
+
+Each skill follows this standard structure:
+
+```
+.claude/skills/<skill-name>/
+├── SKILL.md              # Documentation (frontmatter + usage)
+└── scripts/
+    └── <script-name>.sh  # Executable scripts
+```
+
+**When creating new skills:**
+- Place all executable code in `scripts/` subdirectory
+- Keep SKILL.md at the root for documentation
+- This separates concerns: documentation vs implementation
+- Allows multiple scripts per skill if needed
+- Makes it easy to add tests/ or lib/ folders later
+
+**Example:**
+```bash
+# Create new skill structure
+mkdir -p .claude/skills/my-skill/scripts
+touch .claude/skills/my-skill/SKILL.md
+touch .claude/skills/my-skill/scripts/run.sh
+chmod +x .claude/skills/my-skill/scripts/run.sh
+```
+
 ### Add Configuration
 **Development**: `data/config/claude_hitl_template.yaml.example`
 **Deployment**: User copies to `claude_hitl_template.yaml` and customizes

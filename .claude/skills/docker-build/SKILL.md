@@ -40,7 +40,7 @@ The skill activates automatically when you describe needing to build a Docker im
 Alternatively, run directly:
 
 ```bash
-bash .claude/skills/docker-build/build.sh
+bash .claude/skills/docker-build/scripts/build.sh
 ```
 
 ## Output Format

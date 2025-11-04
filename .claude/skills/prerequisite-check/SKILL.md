@@ -32,7 +32,7 @@ Verifies all required software and tools are installed before proceeding with se
 ## Execution
 
 ```bash
-bash .claude/skills/prerequisite-check/check.sh
+bash .claude/skills/prerequisite-check/scripts/check.sh
 ```
 
 ## Output Format
@@ -65,7 +65,7 @@ Install: brew install podman
 
 ```bash
 # Run prerequisite check
-if bash .claude/skills/prerequisite-check/check.sh; then
+if bash .claude/skills/prerequisite-check/scripts/check.sh; then
     echo "All prerequisites met, continuing setup..."
 else
     echo "Missing prerequisites, guiding user through installation..."
@@ -77,7 +77,7 @@ fi
 
 ```bash
 # Save output to variable
-PREREQ_OUTPUT=$(bash .claude/skills/prerequisite-check/check.sh)
+PREREQ_OUTPUT=$(bash .claude/skills/prerequisite-check/scripts/check.sh)
 PREREQ_STATUS=$?
 
 if [ $PREREQ_STATUS -eq 0 ]; then
