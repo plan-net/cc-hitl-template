@@ -1,177 +1,179 @@
-# Daily Workflow Guide - OrbStack Hybrid Setup
+# Daily Workflow
 
-Quick-start guide for daily development with the OrbStack Linux VM setup.
+This guide describes the typical daily workflow when developing with the Claude + Kodosumi HITL template.
 
-## Overview
-
-This guide assumes you've completed the setup. If not, run `/cc-setup` in Claude Code first - it analyzes your system and creates a guided todo list for complete setup.
-
-**Setup complete?** You should have:
-- OrbStack VM named `ray-cluster` running Ubuntu 24.04
-- Repository cloned at `~/cc-hitl-template` in the VM
-- Python 3.12 virtual environment at `~/cc-hitl-template/.venv` in the VM
-- All dependencies installed (Ray, Kodosumi, Claude SDK)
-
-**Key Concept**: All commands run from your **macOS terminal** in the project directory. You never need to SSH into the VM manually.
-
-## Morning Startup (One Command)
-
-Start everything with a single command:
+## Starting Your Day
 
 ```bash
-just orb-up
+just start
 ```
 
-This command:
-1. Starts Ray cluster in the VM
-2. Syncs your latest code to the VM
-3. Deploys the application to Ray
-4. Starts Kodosumi spooler and admin panel
-
-**Output**:
+Wait ~10 seconds for all services to start. You'll see:
 ```
-====================================
 ✓ Everything is running!
-====================================
   Ray Dashboard: http://localhost:8265
   Admin Panel: http://localhost:3370
 ```
 
-## Development Cycle
+Access the admin panel: http://localhost:3370
 
-### 1. Edit Code (on macOS)
+## During Development
 
-Edit files in your local project directory using your favorite editor:
-- `claude_hitl_template/agent.py` - Claude SDK actor logic
-- `claude_hitl_template/query.py` - Kodosumi endpoint logic
-- `data/config/claude_hitl_template.yaml` - Configuration
+### Making Code Changes
 
-### 2. Deploy Changes (from macOS)
+1. **Edit code** on macOS using your IDE
+2. All code lives in the same directory structure
+3. Git workflow is unchanged
 
-After making changes, deploy them:
+### Deploying Changes
 
+**Option 1: Autonomous (Recommended)**
 ```bash
-just orb-deploy
+# In Claude Code
+/cc-deploy
 ```
 
-This syncs your code to the VM and redeploys to Ray.
+The deployment agent will:
+- Detect what changed (code, configs, dependencies)
+- Decide: rebuild image, redeploy, or restart
+- Ask confirmation for risky operations
+- Report deployment status
 
-### 3. Test (via Browser)
-
-- **Admin Panel**: http://localhost:3370
-  - Submit prompts via the form
-  - Monitor execution progress
-  - View HITL lock interactions
-
-- **Ray Dashboard**: http://localhost:8265
-  - Monitor cluster resources
-  - View actor instances
-  - Check logs and metrics
-
-### 4. View Logs (if needed)
-
-Stream Kodosumi logs:
-
+**Option 2: Manual**
 ```bash
-just orb-logs
+# Redeploy to Ray cluster
+orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && source .env && koco deploy -r"
 ```
 
-Press `Ctrl+C` to exit.
+### Testing
 
-### 5. Repeat
+Access the admin panel at http://localhost:3370 and start a conversation.
 
-Edit → Deploy → Test → Repeat
+### Viewing Logs
 
-## Evening Shutdown
+All logs are in the VM at `/tmp/koco-*.log`
 
-Stop everything:
-
+**View serve logs:**
 ```bash
-just orb-down
+orb -m ray-cluster bash -c "tail -f /tmp/koco-serve.log"
 ```
 
-This stops the Ray cluster and all services in the VM.
+**View spool logs:**
+```bash
+orb -m ray-cluster bash -c "tail -f /tmp/koco-spool.log"
+```
 
-## Quick Reference - Common Commands
+**View Ray logs:**
+```bash
+# Ray dashboard
+open http://localhost:8265
+```
 
-| Command | Purpose | When to Use |
-|---------|---------|-------------|
-| `just orb-up` | Start everything | Every morning / after reboot |
-| `just orb-deploy` | Sync code and redeploy | After editing code |
-| `just orb-down` | Stop everything | End of day / before reboot |
-| `just orb-logs` | View service logs | Debugging issues |
-| `just orb-status` | Check VM and Ray status | Verify everything is running |
-| `just orb-restart` | Restart Ray cluster | After cluster issues |
-| `just orb-shell` | SSH into VM | Advanced debugging |
+### Debugging
+
+**Check if services are running:**
+```bash
+# In VM
+orb -m ray-cluster bash -c "ps aux | grep -E '(ray|koco)'"
+```
+
+**Check Ray status:**
+```bash
+orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && ray status"
+```
+
+**Restart services without stopping VM:**
+```bash
+# Stop koco services
+orb -m ray-cluster bash -c "pkill -f koco"
+
+# Start them again
+orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && source .env && nohup koco spool > /tmp/koco-spool.log 2>&1 &"
+orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && source .env && nohup koco serve --register http://localhost:8001/-/routes > /tmp/koco-serve.log 2>&1 &"
+```
+
+## Ending Your Day
+
+```bash
+just stop
+```
+
+This will:
+1. Stop koco services in VM
+2. Stop Ray cluster in VM
+3. Stop OrbStack VM
+
+Everything is cleanly shut down and ready for tomorrow.
+
+## Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `just start` | Start everything (VM + Ray + Kodosumi) |
+| `just stop` | Stop everything |
+| `/cc-deploy` | Deploy changes (Claude Code) |
 
 ## Typical Daily Session
 
 ```bash
 # Morning
 cd ~/dev/cc-hitl-template
-just orb-up
+just start
 # Wait for "Everything is running!" message
 # Open http://localhost:3370 in browser
 
 # During development
-# Edit files in VSCode/your editor
-just orb-deploy
+# Edit files in your IDE
+/cc-deploy  # In Claude Code
 # Test in browser at http://localhost:3370
 
 # End of day
-just orb-down
+just stop
 ```
 
-## Quick Troubleshooting
+## Troubleshooting
 
-### "Ray cluster failed to start"
+### Services won't start
 
-**Check VM status**:
 ```bash
-just orb-status
+# Full reset
+just stop
+just start
 ```
 
-**Restart Ray**:
+### Can't access admin panel
+
+Check if koco serve is running:
 ```bash
-just orb-restart
+orb -m ray-cluster bash -c "ps aux | grep 'koco serve'"
 ```
 
-### "Admin panel not responding"
-
-**Restart services**:
+Check logs:
 ```bash
-just orb-services
+orb -m ray-cluster bash -c "tail -50 /tmp/koco-serve.log"
 ```
 
-### "Code changes not visible"
+### Ray not connecting
 
-**Redeploy**:
+Check Ray status:
 ```bash
-just orb-deploy
+orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && ray status"
 ```
 
-### "Can't access dashboard/admin panel"
-
-**Check OrbStack is running**:
+Check dashboard:
 ```bash
-orb list
+open http://localhost:8265
 ```
 
-If `ray-cluster` VM is not running, start OrbStack and run:
-```bash
-just orb-up
-```
+### VM issues
 
-### "Need to debug inside VM"
-
-**SSH into VM**:
 ```bash
-just orb-shell
-# Inside VM:
-cd ~/cc-hitl-template
-source .venv/bin/activate
-ray status
-# Exit with: exit
+# Check VM status
+orb list | grep ray-cluster
+
+# Restart VM
+orb stop ray-cluster
+orb start ray-cluster
 ```
 
 ## Dashboard URLs
@@ -190,69 +192,8 @@ Always accessible from macOS browser when services are running:
   - Manage HITL locks
   - View conversation history
 
-## Environment Variables
-
-Your `.env` file on macOS is automatically synced to the VM during `just orb-deploy`.
-
-**Important**: If you update `.env`, you must redeploy:
-
-```bash
-# After editing .env
-just orb-deploy
-```
-
-## Advanced Scenarios
-
-### Deploy Without Starting Services
-
-```bash
-just orb-start   # Start Ray only
-just orb-deploy  # Deploy code
-# Services stay stopped
-```
-
-### Start Services Separately
-
-```bash
-just orb-services  # Start spooler + admin panel
-```
-
-### Restart Ray Without Full Shutdown
-
-```bash
-just orb-restart  # Stop + Start Ray
-# Services will need to be restarted
-just orb-services
-```
-
-## What NOT to Do
-
-❌ Don't SSH into the VM and run commands manually
-✅ Use `just orb-*` commands from macOS
-
-❌ Don't edit code inside the VM
-✅ Edit on macOS and deploy with `just orb-deploy`
-
-❌ Don't manually sync files with `rsync`
-✅ Use `just orb-deploy` which handles sync correctly
-
-❌ Don't run `ray start` directly
-✅ Use `just orb-start` or `just orb-up`
-
-## Tips
-
-1. **Keep the VM running**: OrbStack uses <0.1% CPU when idle. No need to shut down between sessions unless rebooting your Mac.
-
-2. **Fast iteration**: Use `just orb-deploy` frequently during development. It's fast (only syncs changed files).
-
-3. **Monitor with dashboards**: Keep Ray Dashboard and Admin Panel open in browser tabs during development.
-
-4. **Check logs first**: When debugging, run `just orb-logs` before diving into VM.
-
-5. **Clean restart**: If something seems broken, try `just orb-restart` before investigating deeper.
-
 ## Next Steps
 
-- Read [OrbStack Setup Guide](ORBSTACK_SETUP.md) for architecture details
+- Read [SETUP.md](SETUP.md) for setup instructions
 - Read [README.md](../README.md) for project overview
 - Read [CLAUDE.md](../CLAUDE.md) for development guidelines

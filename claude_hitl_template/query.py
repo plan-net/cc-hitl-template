@@ -43,7 +43,6 @@ prompt_form = F.Model(
     - 10-minute timeout is reached
     - User types 'done' or 'exit'
     """),
-    F.Break(),
     F.InputArea(
         label="Your Prompt",
         name="prompt",
@@ -248,6 +247,13 @@ This conversation will run in a containerized Ray Actor with baked `.claude` con
 
                 await tracer.markdown("✓ Connected\n")
 
+                # Get and display agent metadata
+                if is_first_connect:
+                    await tracer.markdown("Loading agent configuration...")
+                    metadata = await actor.get_metadata.remote()
+                    formatted_metadata = _format_metadata(metadata)
+                    await tracer.markdown(formatted_metadata)
+
                 # Main conversation loop
                 iteration = 0
                 while iteration < MAX_MESSAGE_ITERATIONS:
@@ -390,6 +396,92 @@ async def _display_context_messages(tracer: Tracer, context_messages: list):
             subtype = msg.get("subtype", "unknown")
             data = msg.get("data", {})
             await tracer.markdown(f"ℹ️ **System ({subtype}):** {str(data)[:200]}\n")
+
+
+def _format_metadata(metadata: dict) -> str:
+    """
+    Format agent metadata as readable markdown.
+
+    Args:
+        metadata: Metadata dict from actor.get_metadata()
+
+    Returns:
+        Formatted markdown string
+    """
+    lines = []
+    lines.append("## Agent Configuration\n")
+
+    # Container Configuration
+    container = metadata.get("container", {})
+    if container.get("use_container"):
+        lines.append("### Container Image")
+        lines.append(f"**Registry Path:** `{container.get('registry_path', 'unknown')}`")
+
+        # Truncate digest for readability
+        digest = container.get('digest', '')
+        if digest and len(digest) > 25:
+            digest_display = f"{digest[:19]}...{digest[-6:]}"
+        else:
+            digest_display = digest or "unknown"
+        lines.append(f"**Digest:** `{digest_display}` (SHA256)\n")
+
+    # Resource Allocation
+    resources = metadata.get("resources", {})
+    lines.append("### Resource Allocation")
+    lines.append(f"**CPUs:** {resources.get('cpus', 'unknown')}")
+    lines.append(f"**Memory:** {resources.get('memory_gb', 'unknown')} GB\n")
+
+    # Loaded Plugins and Capabilities
+    plugins = metadata.get("plugins", [])
+    if plugins:
+        lines.append("### Loaded Plugins\n")
+        for plugin in plugins:
+            plugin_name = plugin.get("name", "unknown")
+            marketplace = plugin.get("marketplace", "unknown")
+            lines.append(f"**{plugin_name}** (`{marketplace}`)")
+
+            # List capabilities
+            capabilities = []
+            if plugin.get("commands"):
+                capabilities.append(f"Commands: {', '.join(plugin['commands'])}")
+            if plugin.get("agents"):
+                capabilities.append(f"Agents: {', '.join(plugin['agents'])}")
+            if plugin.get("skills"):
+                capabilities.append(f"Skills: {', '.join(plugin['skills'])}")
+            if plugin.get("mcp_servers"):
+                capabilities.append(f"MCP Servers: {', '.join(plugin['mcp_servers'])}")
+
+            if capabilities:
+                for cap in capabilities:
+                    lines.append(f"  - {cap}")
+            else:
+                lines.append("  - No capabilities discovered")
+            lines.append("")
+    else:
+        lines.append("### Loaded Plugins\n")
+        lines.append("*No plugins loaded*\n")
+
+    # Tool Permissions
+    settings = metadata.get("settings", {})
+    permissions = settings.get("permissions", [])
+    if permissions:
+        lines.append("### Tool Permissions")
+        # Group permissions by category for readability
+        lines.append(f"**Allowed Tools:** {len(permissions)} configured")
+        lines.append("<details><summary>View all permissions</summary>\n")
+        for perm in permissions:
+            lines.append(f"- `{perm}`")
+        lines.append("\n</details>\n")
+
+    # Settings Resolution
+    sources = settings.get("sources", [])
+    if sources:
+        lines.append("### Settings Resolution")
+        lines.append(f"**Active Tiers:** {', '.join(sources)}\n")
+
+    lines.append("---\n")
+
+    return "\n".join(lines)
 
 
 def _build_conversation_summary(iterations: int, reason: str) -> str:

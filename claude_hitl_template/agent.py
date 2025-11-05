@@ -186,16 +186,21 @@ class ClaudeSessionActor:
         # In container, HOME is set to /app/template_user by Dockerfile ENV
         is_containerized = os.getenv("HOME") == "/app/template_user"
 
+        # Store resource allocation (matches create_actor() settings)
+        self.num_cpus = 1
+        self.memory_bytes = 1024 * 1024 * 1024  # 1GB
+
         # Load plugins from settings.json
         plugin_specs = []
+        self.settings = None  # Store for metadata
         if is_containerized:
             # In container: Load plugins from marketplace settings
             logger.info("=" * 70)
             logger.info("PLUGIN LOADING")
             logger.info("=" * 70)
 
-            settings = load_marketplace_settings()
-            plugin_specs = resolve_plugin_paths(settings)
+            self.settings = load_marketplace_settings()
+            plugin_specs = resolve_plugin_paths(self.settings)
 
             if plugin_specs:
                 logger.info(f"Successfully loaded {len(plugin_specs)} plugins:")
@@ -222,6 +227,8 @@ class ClaudeSessionActor:
             setting_sources=setting_sources,
             plugins=plugin_specs  # Add loaded plugins
         )
+        self.plugin_specs = plugin_specs  # Store for metadata
+        self.setting_sources = setting_sources  # Store for metadata
         self.client: Optional[ClaudeSDKClient] = None
         self.connected = False
         self.last_activity = time.time()
@@ -405,6 +412,110 @@ class ClaudeSessionActor:
 
         self.connected = False
         return {"status": "disconnected"}
+
+    async def get_metadata(self) -> Dict:
+        """
+        Get comprehensive metadata about agent configuration.
+
+        Returns metadata including:
+        - Container configuration (image, digest, registry)
+        - Resource allocation (CPUs, memory)
+        - Loaded plugins with enumerated capabilities
+        - Tool permissions
+        - Settings resolution tiers
+
+        Returns:
+            Dict with metadata organized by category
+        """
+        metadata = {
+            "container": get_container_image_config(),
+            "resources": {
+                "cpus": self.num_cpus,
+                "memory_bytes": self.memory_bytes,
+                "memory_gb": round(self.memory_bytes / (1024**3), 2)
+            },
+            "settings": {
+                "sources": self.setting_sources or [],
+                "permissions": []
+            },
+            "plugins": []
+        }
+
+        # Scan plugins for capabilities
+        for plugin_spec in self.plugin_specs:
+            plugin_path = Path(plugin_spec["path"])
+            plugin_name = plugin_path.name
+            marketplace_name = plugin_path.parent.parent.parent.name
+
+            plugin_info = {
+                "name": plugin_name,
+                "marketplace": marketplace_name,
+                "path": str(plugin_path),
+                "commands": [],
+                "agents": [],
+                "skills": [],
+                "mcp_servers": []
+            }
+
+            # Scan for commands (*.md in commands/)
+            commands_dir = plugin_path / "commands"
+            if commands_dir.exists():
+                for cmd_file in commands_dir.glob("*.md"):
+                    plugin_info["commands"].append(cmd_file.stem)
+
+            # Scan for agents (*.md in agents/)
+            agents_dir = plugin_path / "agents"
+            if agents_dir.exists():
+                for agent_file in agents_dir.glob("*.md"):
+                    plugin_info["agents"].append(agent_file.stem)
+
+            # Scan for skills (subdirectories in skills/)
+            skills_dir = plugin_path / "skills"
+            if skills_dir.exists():
+                for skill_dir in skills_dir.iterdir():
+                    if skill_dir.is_dir() and not skill_dir.name.startswith("."):
+                        plugin_info["skills"].append(skill_dir.name)
+
+            # Check for MCP servers in plugin settings.json
+            plugin_settings_path = plugin_path / "settings.json"
+            if plugin_settings_path.exists():
+                try:
+                    plugin_settings = json.loads(plugin_settings_path.read_text())
+                    mcp_servers = plugin_settings.get("mcp_servers", {})
+                    plugin_info["mcp_servers"] = list(mcp_servers.keys())
+                except Exception as e:
+                    logger.warning(f"Failed to read plugin settings from {plugin_settings_path}: {e}")
+
+            metadata["plugins"].append(plugin_info)
+
+        # Get permissions from settings
+        if self.settings:
+            # Read permissions from both master and project configs
+            permissions = set()
+
+            # Master permissions
+            master_settings_path = Path("/app/template_user/.claude/settings.json")
+            if master_settings_path.exists():
+                try:
+                    data = json.loads(master_settings_path.read_text())
+                    perms = data.get("permissions", {}).get("allow", [])
+                    permissions.update(perms)
+                except Exception as e:
+                    logger.warning(f"Failed to read master permissions: {e}")
+
+            # Project permissions (overrides/adds to master)
+            project_settings_path = Path("/app/.claude/settings.json")
+            if project_settings_path.exists():
+                try:
+                    data = json.loads(project_settings_path.read_text())
+                    perms = data.get("permissions", {}).get("allow", [])
+                    permissions.update(perms)
+                except Exception as e:
+                    logger.warning(f"Failed to read project permissions: {e}")
+
+            metadata["settings"]["permissions"] = sorted(list(permissions))
+
+        return metadata
 
     def _update_activity(self):
         """Update last activity timestamp."""

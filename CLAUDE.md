@@ -18,10 +18,10 @@ Essential context for Claude Code when working with this repository.
 
 ### System Architecture
 
-**macOS (Hybrid Setup)**:
-- Development: macOS (IDE, git, koco CLI)
-- Ray Cluster: OrbStack Linux VM (containers work natively)
-- Why: Ray's container networking requires Linux; Podman on macOS uses QEMU VM which breaks `127.0.0.1` assumptions
+**macOS**:
+- Development: macOS (IDE, git)
+- Everything else: OrbStack Linux VM (Ray + Kodosumi + containers)
+- Why: Ray's container networking requires Linux; running everything in VM simplifies architecture
 
 **Linux (Native)**:
 - Everything runs natively on Linux
@@ -31,8 +31,8 @@ Essential context for Claude Code when working with this repository.
 
 | Component | Purpose | Location |
 |-----------|---------|----------|
-| Kodosumi | HITL framework + admin panel | Runs on macOS/Linux host |
-| Ray 2.51.1+ | Distributed computing + actors | Runs in OrbStack VM or native Linux |
+| Kodosumi | HITL framework + admin panel | Runs in OrbStack VM (macOS) or natively (Linux) |
+| Ray 2.51.1+ | Distributed computing + actors | Runs in OrbStack VM (macOS) or natively (Linux) |
 | Docker/Podman | Container runtime | Required for actor isolation |
 | Claude SDK 0.1.6 | AI conversation API | Runs in containerized actors |
 | OrbStack | Linux VM for macOS | macOS only |
@@ -191,31 +191,44 @@ All functionality remains the same - just distributed via plugins.
   - State: `.claude/.last-deploy-state.json` (includes image digest)
 
 - **`/cc-shutdown`** - Stop all services cleanly
-  - Stops Kodosumi services (macOS)
-  - Stops Ray cluster
+  - Stops Kodosumi services in VM
+  - Stops Ray cluster in VM
   - Stops OrbStack VM (macOS)
   - Validates shutdown
 
-### justfile Commands (macOS)
+### justfile Commands
 
+**macOS:**
 ```bash
-just orb-up         # Complete startup: Ray + deploy + services
-just orb-down       # Complete shutdown
-just orb-deploy     # Sync code from macOS to VM + redeploy
-just orb-start      # Start Ray cluster in VM only
-just orb-stop       # Stop Ray cluster and VM
-just orb-status     # Check VM and Ray status
-just local-services # Start Kodosumi on macOS
-just local-logs     # View Kodosumi logs
+just start    # Start everything (VM + Ray + Kodosumi)
+just stop     # Stop everything
 ```
 
-### justfile Commands (Linux)
+**What `just start` does:**
+1. Starts OrbStack VM (`ray-cluster`)
+2. Starts Ray cluster in VM
+3. Deploys application to Ray
+4. Starts koco spool in VM
+5. Starts koco serve in VM
+6. Admin panel accessible at http://localhost:3370
 
+**What `just stop` does:**
+1. Stops koco processes in VM
+2. Stops Ray cluster in VM
+3. Stops OrbStack VM
+
+**Logs:**
+All logs are in the VM at `/tmp/koco-*.log`
+
+To view logs:
+```bash
+orb -m ray-cluster bash -c "tail -f /tmp/koco-serve.log"
+```
+
+**Linux:**
 ```bash
 just start    # Start Ray + Kodosumi + deploy
 just stop     # Stop all services
-just test     # Run tests
-just status   # Check service status
 ```
 
 ---

@@ -46,3 +46,6 @@ data/config/claude_hitl_template.yaml
 # Claude Code state files (machine-specific)
 .claude/.last-deploy-state.json
 .claude/.setup-state.json
+
+# Transfer folder (temporary documentation for marketplace updates)
+.transfer/

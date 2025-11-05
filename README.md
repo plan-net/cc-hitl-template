@@ -164,15 +164,12 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for step-by-step manual setup.
 
 ## Daily Workflow
 
-### Morning Startup (macOS)
+### Morning Startup
 ```bash
-just orb-up  # Starts Ray cluster in VM + Kodosumi services on macOS
+just start  # Starts everything (VM + Ray + Kodosumi)
 ```
 
-### Morning Startup (Linux)
-```bash
-just start  # Starts Ray cluster + Kodosumi services
-```
+Wait ~10 seconds, then access: http://localhost:3370
 
 ### Development Cycle
 
@@ -180,19 +177,16 @@ just start  # Starts Ray cluster + Kodosumi services
 2. **Deploy changes**:
    ```bash
    /cc-deploy  # Claude Code - autonomous deployment
-   # OR
-   just orb-deploy  # macOS manual
-   just deploy      # Linux manual
    ```
 3. **Test** at http://localhost:3370
-4. **View logs**: `just local-logs` (macOS) or `just logs` (Linux)
+4. **View logs**:
+   ```bash
+   orb -m ray-cluster bash -c "tail -f /tmp/koco-serve.log"
+   ```
 
 ### Evening Shutdown
 ```bash
-/cc-shutdown  # Claude Code
-# OR
-just orb-down  # macOS manual
-just stop      # Linux manual
+just stop  # Stops everything
 ```
 
 See [docs/DAILY_WORKFLOW.md](docs/DAILY_WORKFLOW.md) for complete daily workflow guide.
