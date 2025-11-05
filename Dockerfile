@@ -70,9 +70,21 @@ COPY ${PROJECT_CONFIG_PATH} /app/.claude
 # Plugins are organized as /app/plugins/{marketplace}/plugins/{plugin}/
 COPY build_configs/plugins /app/plugins
 
-# Fix ownership of all config directories for ray user
-# This prevents permission errors when Claude CLI or SDK tries to access configs
-RUN chown -R ray:users /app/template_user/.claude /app/.claude /app/plugins
+# Copy application code
+COPY claude_hitl_template /app/claude_hitl_template
+COPY pyproject.toml /app/pyproject.toml
+COPY README.md /app/README.md
+
+# Install application as editable package
+RUN pip install --no-cache-dir -e /app
+
+# Create debug directories for Claude SDK logging
+# Claude SDK writes debug logs to .claude/debug/ which must be writable
+RUN mkdir -p /app/template_user/.claude/debug /app/.claude/debug
+
+# Give ray user full ownership and permissions to entire /app directory
+# This prevents any permission issues with Claude CLI, SDK, or application code
+RUN chown -R ray:users /app && chmod -R 755 /app
 
 # Set HOME to template_user so "user" settings load from master config
 # This enables ClaudeAgentOptions(setting_sources=["user", "project", "local"]) to find configs

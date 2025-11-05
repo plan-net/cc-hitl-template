@@ -67,10 +67,16 @@ sudo apt update
 # Install Python 3.12
 sudo apt install -y python3.12 python3.12-venv python3-pip
 
-# Install Docker (for building container images)
+# Install container runtime (Docker OR Podman - choose one)
+
+# Option 1: Docker (simpler, works out of the box)
 sudo apt install -y docker.io
 sudo usermod -aG docker $USER
 newgrp docker
+
+# Option 2: Podman (daemonless, rootless, better security)
+# sudo apt install -y podman
+# Note: Requires user namespace configuration (see below)
 
 # Install Node.js 18 (required for Claude CLI)
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
@@ -78,11 +84,42 @@ sudo apt install -y nodejs
 
 # Verify installations
 python3.12 --version
-docker --version
+docker --version  # or: podman --version
 node --version
 ```
 
 **Note:** Ubuntu 24.04 implements PEP 668 which prevents system-wide pip installations. We'll create a virtual environment in the next step.
+
+#### 3.1 Podman Configuration (If Using Podman)
+
+**If you chose Podman**, you must configure user namespaces for rootless containers:
+
+```bash
+# Still in VM (orb shell ray-cluster)
+
+# Configure subordinate UID/GID ranges
+# Format: username:start_uid:count
+sudo bash -c 'echo "sebkuepers:100000:65536" >> /etc/subuid'
+sudo bash -c 'echo "sebkuepers:100000:65536" >> /etc/subgid'
+
+# Apply configuration
+podman system migrate
+
+# Verify configuration
+cat /etc/subuid  # Should show: sebkuepers:100000:65536
+cat /etc/subgid  # Should show: sebkuepers:100000:65536
+
+# Test podman works
+podman run --rm hello-world
+```
+
+**Why this is needed:**
+- Rootless podman requires subordinate UID/GID mapping
+- Container runs as `ray` user (UID 1000) inside
+- Host user is `sebkuepers` (UID 501)
+- Mapping allows podman to use UIDs 100000-165535 for container processes
+
+**For detailed troubleshooting:** See [Container Runtime Issues](TROUBLESHOOTING.md#container-runtime-issues)
 
 ### 4. Clone Repository and Setup
 
@@ -374,103 +411,32 @@ orb delete ray-cluster
 
 ## Troubleshooting
 
-### Ray Connection Refused
+This guide covered the hybrid macOS + OrbStack VM setup. For detailed troubleshooting:
 
-**Symptom:**
-```
-ConnectionError: ray://localhost:10001 connection refused
-```
+**Common issues:**
+- **Container runtime errors** → See [Container Runtime Issues](TROUBLESHOOTING.md#container-runtime-issues)
+- **Podman user namespace** → See [User Namespace Configuration](TROUBLESHOOTING.md#user-namespace-configuration-for-rootless-podman)
+- **Permission errors** → See [Permission Issues: /tmp/ray](TROUBLESHOOTING.md#permission-issues-tmpray-file-locking)
+- **Ray connection refused** → See [Ray Connection Refused](TROUBLESHOOTING.md#ray-connection-refused)
+- **Port conflicts** → See [Port Already in Use](TROUBLESHOOTING.md#port-already-in-use)
+- **Container image not found** → See [Container Image Digests](TROUBLESHOOTING.md#container-image-digests-local-vs-registry)
+- **Code changes not reflected** → See [Code Changes Not Reflected](TROUBLESHOOTING.md#code-changes-not-reflected)
 
-**Fix:**
+**Quick fixes:**
+
 ```bash
-# Check if Ray is running in VM
-orb shell ray-cluster
-ray status
+# Clean restart
+just stop && just start
 
-# If not running, start it
-ray start --head --disable-usage-stats --port=6379
+# Fix /tmp/ray permissions (for containerized actors)
+orb -m ray-cluster bash -c "sudo chown -R 1000:1000 /tmp/ray && sudo chmod -R 777 /tmp/ray"
+
+# Check status
+orb list | grep ray-cluster  # VM status
+orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && ray status"  # Ray status
 ```
 
-### Port Already in Use
-
-**Symptom:**
-```
-OSError: [Errno 48] Address already in use
-```
-
-**Fix:**
-```bash
-# On macOS - find what's using the port
-lsof -i :10001
-
-# Kill the process or change Ray's client port in VM:
-orb shell ray-cluster
-ray stop
-ray start --head --disable-usage-stats --port=6379 --ray-client-server-port=10002
-
-# Then connect with ray.init("ray://localhost:10002")
-```
-
-### Container Image Not Found
-
-**Symptom:**
-```
-RuntimeError: image_uri 'claude-hitl-worker:latest' not found
-```
-
-**Fix:**
-```bash
-# Rebuild image in VM
-orb shell ray-cluster
-cd cc-hitl-template
-docker build -t claude-hitl-worker:latest .
-
-# Verify
-docker images | grep claude-hitl-worker
-```
-
-### ANTHROPIC_API_KEY Not Found
-
-**Symptom:**
-```
-Error: ANTHROPIC_API_KEY environment variable not set
-```
-
-**Fix:**
-```bash
-# In VM
-orb shell ray-cluster
-cd cc-hitl-template
-source .env
-export ANTHROPIC_API_KEY
-
-# Verify
-echo $ANTHROPIC_API_KEY
-
-# Restart services
-just stop
-just start
-```
-
-### Code Changes Not Reflected
-
-**Symptom:**
-You changed code on macOS but Ray actors still use old code.
-
-**Fix:**
-```bash
-# Sync code to VM
-rsync -av --exclude='.venv' \
-  /path/to/cc-hitl-template/ \
-  ray-cluster.orb.local:~/cc-hitl-template/
-
-# Redeploy in VM
-orb shell ray-cluster
-cd cc-hitl-template
-koco deploy -r
-```
-
-Or use git workflow (commit → push on macOS, pull in VM).
+For comprehensive troubleshooting: **[docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md)**
 
 ## Alternative: Linux Native Environment
 

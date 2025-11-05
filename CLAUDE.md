@@ -601,25 +601,44 @@ fast_app = MyService.bind()
 
 **Services won't start**:
 ```bash
-just orb-down && just orb-up  # macOS
-just stop && just start        # Linux
+just stop && just start  # Clean restart
 ```
+
+**Ray actors stuck in PENDING_CREATION**:
+```bash
+# Fix /tmp/ray permissions (for containerized actors)
+orb -m ray-cluster bash -c "sudo chown -R 1000:1000 /tmp/ray && sudo chmod -R 777 /tmp/ray"
+```
+See: [Container Runtime Issues](docs/TROUBLESHOOTING.md#container-runtime-issues)
 
 **Can't reach Ray Dashboard**:
 ```bash
-just orb-status  # Check Ray is running
+just start  # Start all services
 curl http://localhost:8265  # Test accessibility
 ```
+
+**Container image not found**:
+- Check digest in `.env` matches `data/config/claude_hitl_template.yaml`
+- Use registry digest from `.RepoDigests`, not local `.Digest`
+- See: [Container Image Digests](docs/TROUBLESHOOTING.md#container-image-digests-local-vs-registry)
+
+**Podman user namespace errors**:
+```bash
+# Configure subordinate UID/GID ranges
+orb -m ray-cluster bash -c "sudo bash -c 'echo sebkuepers:100000:65536 >> /etc/subuid && echo sebkuepers:100000:65536 >> /etc/subgid'"
+orb -m ray-cluster bash -c "podman system migrate"
+```
+See: [User Namespace Configuration](docs/TROUBLESHOOTING.md#user-namespace-configuration-for-rootless-podman)
 
 **SSH/rsync errors (macOS)**:
 - Use `ray-cluster@orb` format (not `ray-cluster.orb.local`)
 - OrbStack handles SSH keys automatically
 - Check VM running: `orb list | grep ray-cluster`
 
-**Docker build fails**:
+**Docker/Podman build fails**:
 - Check GITHUB_TOKEN in .env
 - Verify Docker/Podman running
-- Try: `./build-and-push.sh --no-push`
+- See: [Build Issues](docs/TROUBLESHOOTING.md#build-issues)
 
 For comprehensive solutions: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-kodosumi-hitl-template"
-version = "0.1.0"
+version = "0.2.0"
 description = "Minimal template showcasing Claude Agent SDK integration with Kodosumi HITL functionality"
 readme = "README.md"
 requires-python = ">=3.12"

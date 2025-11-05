@@ -9,6 +9,8 @@ start:
 	@echo "Starting Ray cluster in VM..."
 	@orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && ray start --head --disable-usage-stats --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265"
 	@sleep 2
+	@echo "Fixing /tmp/ray permissions for containers..."
+	@orb -m ray-cluster bash -c "sudo chown -R 1000:1000 /tmp/ray && sudo chmod -R 777 /tmp/ray"
 	@echo "Deploying application..."
 	@orb -m ray-cluster bash -c "cd ~/dev/cc-hitl-template && source .venv/bin/activate && source .env && koco deploy -r"
 	@sleep 2

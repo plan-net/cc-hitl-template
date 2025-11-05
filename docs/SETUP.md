@@ -26,16 +26,21 @@ This guide is for manual installation or understanding what `/cc-setup` does beh
 | Software | Version | Purpose |
 |----------|---------|---------|
 | Homebrew | Latest | Package manager for macOS |
-| Podman | Latest | Building Docker images on macOS |
 | OrbStack | Latest | Linux VM for Ray cluster |
+| Docker/Podman | Latest | Container runtime (installed in VM) |
 
 **Why OrbStack on macOS?** Ray's container networking requires native Linux. See [ARCHITECTURE.md](ARCHITECTURE.md#why-macos-needs-orbstack) for details.
+
+**Container runtime:** Install Docker OR Podman in the OrbStack VM (not on macOS). Podman requires user namespace configuration. See [ORBSTACK_SETUP.md](ORBSTACK_SETUP.md) for details.
 
 ### Linux Specific
 
 | Software | Version | Purpose |
 |----------|---------|---------|
-| Docker | 20.10+ | Container runtime (native Linux support) |
+| Docker | 20.10+ | Container runtime (simpler option) |
+| Podman | 4.9.3+ | Container runtime (rootless, requires namespace config) |
+
+**Container runtime:** Choose Docker (simpler) OR Podman (daemonless, rootless). If using Podman, you must configure user namespaces (`/etc/subuid` and `/etc/subgid`). See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#user-namespace-configuration-for-rootless-podman) for configuration steps.
 
 ---
 
