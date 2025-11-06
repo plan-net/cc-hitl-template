@@ -203,6 +203,7 @@ See [docs/DAILY_WORKFLOW.md](docs/DAILY_WORKFLOW.md) for complete daily workflow
 
 ### Reference
 - **[Plugin Guide](docs/PLUGINS.md)** - Plugin system and marketplace usage
+- **[Dependency Management](docs/DEPENDENCY-MANAGEMENT.md)** - Managing container dependencies
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Error solutions
 - **[Reference](docs/REFERENCE.md)** - Commands, configs, patterns, FAQ
 - **[Known Issues](docs/KNOWN_ISSUES.md)** - SDK bugs and workarounds
@@ -211,6 +212,10 @@ See [docs/DAILY_WORKFLOW.md](docs/DAILY_WORKFLOW.md) for complete daily workflow
 - **[Development Guide](docs/DEVELOPMENT.md)** - Extending the template
 - **[Deployment Guide](docs/DEPLOYMENT.md)** - Production deployment
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and rationale
+
+### Specifications
+- **[Immutable Container Dependencies](specs/immutable-container-dependencies.md)** - Complete dependency system specification
+- **[Template Repo Changes](specs/template-repo-changes.md)** - Implementation checklist for this repo
 
 ---
 
@@ -238,6 +243,15 @@ Docker images bake multiple `.claude/` configuration sources:
 - **Plugins** (`/app/plugins/`): Baked marketplace plugins
 - **Settings merge**: `setting_sources=["user", "project", "local"]`
 - **Environment**: `HOME=/app/template_user` for SDK settings resolution
+
+### Immutable Container Dependencies
+All runtime dependencies declared at build time for security and reliability:
+- **Immutable containers**: No pip/npm/apt installs at runtime
+- **Config repo declarations**: Dependencies live in config repos' `dependencies/` directories
+- **Automatic installation**: Build system merges and installs all declared packages
+- **Runtime awareness**: Agents can introspect available packages via manifest
+- **Clear feedback**: Agents suggest missing dependencies via structured messages
+- See: [Dependency Management Guide](docs/DEPENDENCY-MANAGEMENT.md)
 
 See [CLAUDE.md#container-folder-structure](CLAUDE.md#container-folder-structure) and [docs/PLUGINS.md#container-folder-structure](docs/PLUGINS.md#container-folder-structure) for complete container layout.
 

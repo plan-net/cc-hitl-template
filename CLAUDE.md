@@ -652,4 +652,135 @@ For comprehensive solutions: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ---
 
+## Immutable Container Environment
+
+### Understanding Container Immutability
+
+**CRITICAL**: Containerized agents run in **immutable Docker environments**.
+
+**What this means**:
+- ✗ **Cannot install** packages via pip, npm, apt at runtime
+- ✗ **No write access** to system directories or package managers
+- ✓ **Can use** any packages baked into the container at build time
+- ✓ **Can check** available packages via `/app/.dependency-manifest.json`
+
+**All runtime dependencies must be declared in config repositories before building the container.**
+
+### Dependency Manifest
+
+Every container includes `.dependency-manifest.json` listing installed packages:
+
+```bash
+# Check what's available in your container
+cat /app/.dependency-manifest.json | jq '.'
+
+# List installed Python packages
+pip list
+
+# List installed Node.js packages
+npm list -g --depth=0
+```
+
+**Example manifest**:
+```json
+{
+  "timestamp": "2025-11-06T10:30:00Z",
+  "source": "Config repositories (master + project)",
+  "python_packages": ["beautifulsoup4>=4.12.0", "lxml>=4.9.0"],
+  "nodejs_packages": ["docx", "puppeteer"],
+  "system_packages": ["chromium", "chromium-driver"]
+}
+```
+
+### Working with Missing Dependencies
+
+**If a skill/task requires a package not in the manifest**:
+
+1. **DO NOT** attempt installation (will fail)
+2. **Check alternatives** using available packages
+3. **Communicate clearly** to the user about the limitation
+4. **Suggest addition** for future container builds
+
+**Communication Pattern**:
+```markdown
+⚠️ **Dependency Limitation**
+
+**Task**: Generate Word document report
+
+**Missing Package**: `docx` (Node.js package for .docx generation)
+
+**Current Approach**: Generating Markdown report instead
+
+**To Add This Capability**:
+1. Add `"docx": "^8.5.0"` to config repo's `dependencies/package.json`
+2. Rebuild container: Run `/cc-deploy` (will detect dependency change)
+3. Next execution will have Word export capability
+
+**Would you like me to proceed with the Markdown report?**
+```
+
+### Helper Function for Agents
+
+Use `send_dependency_suggestion()` from `query.py` to communicate missing dependencies:
+
+```python
+from claude_hitl_template.query import send_dependency_suggestion
+
+# When you detect a missing dependency
+response = await send_dependency_suggestion(
+    tracer=tracer,
+    task="Generate Word document",
+    missing_packages=[{
+        "name": "docx",
+        "type": "nodejs",
+        "purpose": "Create .docx files with formatting"
+    }],
+    current_approach="Generate Markdown report instead",
+    ask_user=True
+)
+
+if response and response.get("proceed") == "no":
+    await tracer.markdown("Please add dependencies and rebuild, then try again.")
+    return
+```
+
+### Best Practices for Agents
+
+1. **Check Before Using**: Verify packages exist before importing
+   ```python
+   try:
+       import beautifulsoup4
+       has_bs4 = True
+   except ImportError:
+       has_bs4 = False
+   ```
+
+2. **Graceful Degradation**: Offer alternatives when deps missing
+   ```python
+   if has_docx:
+       await generate_word_report()
+   else:
+       await generate_markdown_report()
+       await send_dependency_suggestion(...)
+   ```
+
+3. **Clear Communication**: Explain what's possible vs. what's not
+
+4. **Suggest Improvements**: Help users understand how to add capabilities
+
+### For Template Users
+
+**Adding new dependencies**:
+
+See: [docs/DEPENDENCY-MANAGEMENT.md](docs/DEPENDENCY-MANAGEMENT.md) for user guide
+See: [specs/immutable-container-dependencies.md](specs/immutable-container-dependencies.md) for complete system documentation
+
+**Quick steps**:
+1. Edit config repo's `dependencies/` files (requirements.txt, package.json, etc.)
+2. Commit and push changes
+3. Run `/cc-deploy` to rebuild container with new dependencies
+4. Test with new capabilities available
+
+---
+
 **This is a Claude Code first template. Use `/cc-setup` to get started!**

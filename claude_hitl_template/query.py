@@ -28,6 +28,114 @@ MAX_MESSAGE_ITERATIONS = 50  # Safety limit to prevent infinite loops
 app = ServeAPI()
 
 
+# Helper function for dependency suggestions
+async def send_dependency_suggestion(
+    tracer: Tracer,
+    task: str,
+    missing_packages: list[dict],
+    current_approach: str,
+    ask_user: bool = True
+) -> dict | None:
+    """
+    Send structured dependency improvement suggestion to user via Kodosumi.
+
+    This function helps agents communicate clearly when they encounter missing
+    dependencies in the immutable container environment. It explains what's
+    missing, why it's needed, and how to add it for future builds.
+
+    Args:
+        tracer: Kodosumi tracer for sending messages
+        task: Brief description of what you're trying to accomplish
+        missing_packages: List of dicts with keys:
+            - name (str): Package name
+            - type (str): Package type ("python", "nodejs", or "system")
+            - purpose (str): Why this package is needed
+        current_approach: What you'll do instead without these packages
+        ask_user: If True, ask user if they want to proceed with workaround
+
+    Returns:
+        User response dict if ask_user=True, else None
+
+    Example:
+        response = await send_dependency_suggestion(
+            tracer=tracer,
+            task="Generate Word document report",
+            missing_packages=[
+                {
+                    "name": "docx",
+                    "type": "nodejs",
+                    "purpose": "Generate .docx files with formatting"
+                }
+            ],
+            current_approach="Generate Markdown report instead",
+            ask_user=True
+        )
+        if response and response.get("proceed") == "no":
+            await tracer.markdown("Please add dependencies and rebuild.")
+            return
+    """
+    # Build package list
+    pkg_list = "\n".join([
+        f"- **{pkg['name']}** ({pkg['type']}): {pkg['purpose']}"
+        for pkg in missing_packages
+    ])
+
+    # Create dependency addition instructions
+    instructions = []
+    for pkg in missing_packages:
+        if pkg['type'] == 'python':
+            instructions.append(f"   - Add `{pkg['name']}` to `dependencies/requirements.txt`")
+        elif pkg['type'] == 'nodejs':
+            instructions.append(f"   - Add `\"{pkg['name']}\": \"^X.Y.Z\"` to `dependencies/package.json`")
+        elif pkg['type'] == 'system':
+            instructions.append(f"   - Add `{pkg['name']}` to `dependencies/system-packages.txt`")
+
+    instruction_text = "\n".join(instructions)
+
+    message = f"""
+## ⚠️ Dependency Limitation
+
+**Task**: {task}
+
+**Missing Packages**:
+{pkg_list}
+
+**To Add These Packages**:
+1. Edit your config repository's `dependencies/` directory:
+{instruction_text}
+2. Commit and push changes
+3. Run `/cc-deploy` to rebuild container
+4. Next execution will have these capabilities
+
+**Current Approach**: {current_approach}
+
+---
+*This is an automated suggestion to help improve future capabilities.*
+    """
+
+    await tracer.markdown(message.strip())
+
+    if ask_user:
+        # Ask if user wants to proceed with workaround
+        response = await tracer.lease(
+            "dependency-workaround-approval",
+            F.Model(
+                F.Markdown(f"### Proceed with {current_approach}?"),
+                F.Radio(
+                    label="Your choice",
+                    name="proceed",
+                    options=[
+                        {"label": "Yes, use workaround", "value": "yes"},
+                        {"label": "No, I'll add dependencies first", "value": "no"}
+                    ]
+                ),
+                F.Submit("Continue")
+            )
+        )
+        return response
+    return None
+
+
 # Simple input form for user prompts
 prompt_form = F.Model(
     F.Markdown("""

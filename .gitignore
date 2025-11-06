@@ -11,6 +11,7 @@ __pycache__/
 dist/
 build/
 build_configs/
+.dependency-manifest.json
 
 # Testing
 .pytest_cache/

@@ -47,7 +47,27 @@ RUN apt-get update && apt-get install -y curl && \
 # Install Claude CLI globally
 RUN npm install -g @anthropic-ai/claude-code
 
-# Install Python dependencies from pyproject.toml
+# Build args for config paths
+ARG MASTER_CONFIG_PATH=template_user/.claude
+ARG PROJECT_CONFIG_PATH=project/.claude
+
+# Copy aggregated dependencies from build_configs/ (populated by build.sh)
+# These are merged from master and project config repositories
+COPY build_configs/dependencies/system-packages.txt /tmp/system-packages.txt
+COPY build_configs/dependencies/requirements.txt /tmp/requirements.txt
+COPY build_configs/dependencies/package.json /tmp/package.json
+
+# Install system packages (if any declared in config repos)
+RUN if [ -s /tmp/system-packages.txt ]; then \
+      echo "Installing system packages from config repos..." && \
+      apt-get update && \
+      xargs -a /tmp/system-packages.txt apt-get install -y && \
+      apt-get clean && rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "No additional system packages to install"; \
+    fi
+
+# Install base Python dependencies (always required)
 # Dependencies: claude-agent-sdk, kodosumi, ray, python-dotenv, pytest
 RUN pip install --no-cache-dir \
     claude-agent-sdk>=0.1.6 \
@@ -55,9 +75,25 @@ RUN pip install --no-cache-dir \
     python-dotenv>=1.1.0 \
     pytest>=8.4.1
 
-# Build args for config paths
-ARG MASTER_CONFIG_PATH=template_user/.claude
-ARG PROJECT_CONFIG_PATH=project/.claude
+# Install additional Python dependencies from config repos
+RUN if [ -s /tmp/requirements.txt ]; then \
+      echo "Installing Python packages from config repos..." && \
+      pip install --no-cache-dir -r /tmp/requirements.txt; \
+    else \
+      echo "No additional Python packages to install"; \
+    fi
+
+# Install Node.js dependencies from config repos
+RUN if [ -s /tmp/package.json ] && [ "$(jq '.dependencies | length' /tmp/package.json)" -gt 0 ]; then \
+      echo "Installing Node.js packages from config repos..." && \
+      cd /tmp && \
+      for pkg in $(jq -r '.dependencies | to_entries[] | "\(.key)@\(.value)"' package.json); do \
+        echo "  Installing $pkg..." && \
+        npm install -g "$pkg"; \
+      done; \
+    else \
+      echo "No Node.js packages to install"; \
+    fi
 
 # Copy master agent config (template/user-level settings)
 COPY ${MASTER_CONFIG_PATH} /app/template_user/.claude
@@ -69,6 +105,10 @@ COPY ${PROJECT_CONFIG_PATH} /app/.claude
 # Copy plugins from marketplaces (populated by build.sh if configured)
 # Plugins are organized as /app/plugins/{marketplace}/plugins/{plugin}/
 COPY build_configs/plugins /app/plugins
+
+# Copy dependency manifest for runtime awareness
+# Agents can read this to see what packages are available
+COPY build_configs/.dependency-manifest.json /app/.dependency-manifest.json
 
 # Copy application code
 COPY claude_hitl_template /app/claude_hitl_template
