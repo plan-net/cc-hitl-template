@@ -640,6 +640,14 @@ See: [User Namespace Configuration](docs/TROUBLESHOOTING.md#user-namespace-confi
 - Verify Docker/Podman running
 - See: [Build Issues](docs/TROUBLESHOOTING.md#build-issues)
 
+**CRITICAL - VM Directory Structure**:
+- **NEVER** sync macOS `.venv` to VM - it has wrong architecture binaries
+- VM has its own venv at `~/.venv` (Linux binaries)
+- Project at `~/dev/cc-hitl-template/.venv` is a **symlink** to `~/.venv`
+- When syncing project: `rsync -avz --exclude='.venv' ./ ray-cluster@orb:~/dev/cc-hitl-template/`
+- If packages missing in VM: `orb -m ray-cluster bash -c "source ~/.venv/bin/activate && cd ~/dev/cc-hitl-template && pip install -e ."`
+- Justfile runs **from macOS** but executes **in VM** via `orb -m ray-cluster bash -c "..."`
+
 For comprehensive solutions: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ---
