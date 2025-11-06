@@ -14,6 +14,29 @@ Essential context for Claude Code when working with this repository.
 
 ---
 
+## ⚠️ CRITICAL RULES - READ FIRST
+
+**NEVER DO THESE THINGS:**
+
+1. **❌ NEVER call build scripts directly** - Always use `/cc-deploy` command
+   - ❌ WRONG: `bash build.sh` or `bash ~/.claude/plugins/.../build.sh`
+   - ✅ CORRECT: `/cc-deploy` (uses Skill tool properly)
+
+2. **❌ NEVER use raw Bash for service control** - Always use `just` commands
+   - ❌ WRONG: `ray stop`, `ray start`, `orb -m ray-cluster bash -c "..."`
+   - ✅ CORRECT: `just stop`, `just start`
+
+3. **❌ NEVER skip `just stop` before `just start`** - Always stop first
+   - ❌ WRONG: `just start` (when services running)
+   - ✅ CORRECT: `just stop && just start`
+
+**Why these rules exist:**
+- `/cc-deploy` handles change detection, approvals, and state tracking
+- `just` commands handle VM/Ray/Kodosumi coordination correctly
+- Direct script calls bypass safety checks and cause inconsistent state
+
+---
+
 ## Development Context
 
 ### System Architecture
