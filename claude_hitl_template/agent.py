@@ -331,7 +331,8 @@ class ClaudeSessionActor:
                 return {
                     "status": "complete",
                     "user_messages": user_messages,
-                    "context_messages": context_messages
+                    "context_messages": context_messages,
+                    "completion_type": "sdk_result_message"
                 }
 
             # Process system messages
@@ -375,7 +376,16 @@ class ClaudeSessionActor:
                             "is_error": block.is_error or False
                         })
 
-        # Stream exhausted = Claude is ready for next input
+        # Stream exhausted - Check for text-based completion signal (fallback)
+        if self._check_text_completion_signal(user_messages):
+            return {
+                "status": "complete",
+                "user_messages": user_messages,
+                "context_messages": context_messages,
+                "completion_type": "text_marker"
+            }
+
+        # No completion signal - Claude is ready for next input
         return {
             "status": "ready",
             "user_messages": user_messages,
@@ -516,6 +526,23 @@ class ClaudeSessionActor:
             metadata["settings"]["permissions"] = sorted(list(permissions))
 
         return metadata
+
+    def _check_text_completion_signal(self, messages: list) -> bool:
+        """
+        Check if any text message contains completion signal marker.
+
+        Returns:
+            True if completion signal found, False otherwise
+        """
+        COMPLETION_MARKER = "[TASK_COMPLETE]"
+
+        for msg in messages:
+            if msg.get("type") == "text":
+                content = msg.get("content", "")
+                if COMPLETION_MARKER in content:
+                    return True
+
+        return False
 
     def _update_activity(self):
         """Update last activity timestamp."""

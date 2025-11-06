@@ -19,6 +19,9 @@ from kodosumi import dtypes
 from ray import serve
 from datetime import datetime
 from .agent import create_actor, get_actor, cleanup_actor, get_container_image_config
+from .config import load_kodosumi_config, get_file_exclusions
+from .files import scan_generated_files, upload_files_to_kodosumi
+from .results import build_final_result, build_conversation_summary
 
 # Configuration
 CONVERSATION_TIMEOUT_SECONDS = 600  # 10 minutes
@@ -289,6 +292,9 @@ async def run_conversation(inputs: dict, tracer: Tracer):
         inputs: Execution inputs including initial prompt
         tracer: Kodosumi tracer for progress updates and HITL
     """
+    # Load configuration for completion behavior
+    config = load_kodosumi_config()
+
     # Generate unique execution ID
     execution_id = inputs.get("execution_id", str(uuid.uuid4()))
     prompt = inputs["prompt"]
@@ -362,6 +368,18 @@ This conversation will run in a containerized Ray Actor with baked `.claude` con
                     formatted_metadata = _format_metadata(metadata)
                     await tracer.markdown(formatted_metadata)
 
+                # Check for autonomous completion on initial connection (ResultMessage received)
+                if result["status"] == "complete" and config.get("completion_mode") == "auto-complete":
+                    completion_type = result.get("completion_type", "unknown")
+                    await tracer.markdown(f"\n✓ **Task complete** (via {completion_type}) - Finalizing job...")
+                    final_result = await _finalize_job(
+                        tracer=tracer,
+                        messages=result.get("user_messages", []),
+                        iteration=1,
+                        config=config
+                    )
+                    return dtypes.Markdown(body=final_result)
+
                 # Main conversation loop
                 iteration = 0
                 while iteration < MAX_MESSAGE_ITERATIONS:
@@ -372,6 +390,18 @@ This conversation will run in a containerized Ray Actor with baked `.claude` con
                     if is_timeout:
                         summary = _build_conversation_summary(iteration, "⏱️ Session timed out (11 minutes idle)")
                         return dtypes.Markdown(body=summary)
+
+                    # Check for autonomous completion after each query (ResultMessage received)
+                    if result["status"] == "complete" and config.get("completion_mode") == "auto-complete":
+                        completion_type = result.get("completion_type", "unknown")
+                        await tracer.markdown(f"\n✓ **Task complete** (via {completion_type}) - Finalizing job...")
+                        final_result = await _finalize_job(
+                            tracer=tracer,
+                            messages=result.get("user_messages", []),
+                            iteration=iteration,
+                            config=config
+                        )
+                        return dtypes.Markdown(body=final_result)
 
                     # Note: result["status"] == "complete" just means this turn is done,
                     # NOT that the conversation should end. Continue to HITL loop to let
@@ -590,6 +620,43 @@ def _format_metadata(metadata: dict) -> str:
     lines.append("---\n")
 
     return "\n".join(lines)
+
+
+async def _finalize_job(
+    tracer: Tracer,
+    messages: list,
+    iteration: int,
+    config: dict
+) -> str:
+    """
+    Finalize job completion: scan files, upload, and build final result.
+
+    Args:
+        tracer: Kodosumi tracer for progress updates
+        messages: Claude's messages from this turn
+        iteration: Current iteration count
+        config: Configuration dict with upload_files setting
+
+    Returns:
+        Formatted markdown result
+    """
+    uploaded_files = []
+
+    # Handle file uploads if enabled
+    if config.get("upload_files", True):
+        exclusions = get_file_exclusions()
+        file_paths = await scan_generated_files(exclusions)
+
+        if file_paths:
+            uploaded_files = await upload_files_to_kodosumi(tracer, file_paths)
+
+    # Build final result
+    return build_final_result(
+        messages=messages,
+        files=uploaded_files,
+        iteration=iteration,
+        reason="Task completed"
+    )
 
 
 def _build_conversation_summary(iterations: int, reason: str) -> str:
