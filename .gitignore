@@ -50,3 +50,6 @@ data/config/claude_hitl_template.yaml
 
 # Transfer folder (temporary documentation for marketplace updates)
 .transfer/
+
+# VM configuration exports (may contain API keys)
+vm-config-*.txt
