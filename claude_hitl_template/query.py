@@ -394,6 +394,18 @@ This conversation will run in a containerized Ray Actor with baked `.claude` con
                     # Display context messages in admin panel (thinking, tool results, etc.)
                     await _display_context_messages(tracer, result.get("context_messages", []))
 
+                    # Check for autonomous completion BEFORE showing lock form
+                    if result["status"] == "complete" and config.get("completion_mode") == "auto-complete":
+                        completion_type = result.get("completion_type", "unknown")
+                        await tracer.markdown(f"\n✓ **Task complete** (via {completion_type}) - Finalizing job...")
+                        final_result = await _finalize_job(
+                            tracer=tracer,
+                            messages=result.get("user_messages", []),
+                            iteration=iteration,
+                            config=config
+                        )
+                        return dtypes.Markdown(body=final_result)
+
                     # HITL pause - Pass only user-facing messages to lock handler
                     user_input = await tracer.lock(
                         "claude-input",
@@ -423,18 +435,6 @@ This conversation will run in a containerized Ray Actor with baked `.claude` con
                     # Send to Claude
                     await tracer.markdown(f"\n**You:** {response_text}\n\n*Waiting for Claude's response...*\n")
                     result = await actor.query.remote(response_text)
-
-                    # Check for autonomous completion after query
-                    if result["status"] == "complete" and config.get("completion_mode") == "auto-complete":
-                        completion_type = result.get("completion_type", "unknown")
-                        await tracer.markdown(f"\n✓ **Task complete** (via {completion_type}) - Finalizing job...")
-                        final_result = await _finalize_job(
-                            tracer=tracer,
-                            messages=result.get("user_messages", []),
-                            iteration=iteration,
-                            config=config
-                        )
-                        return dtypes.Markdown(body=final_result)
 
                 # Max iterations check
                 if iteration >= MAX_MESSAGE_ITERATIONS:

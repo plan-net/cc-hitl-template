@@ -18,9 +18,10 @@ Essential context for Claude Code when working with this repository.
 
 **NEVER DO THESE THINGS:**
 
-1. **❌ NEVER call build scripts directly** - Always use `/cc-deploy` command
+1. **❌ NEVER call build scripts directly** - Always use the `docker-build` Skill
    - ❌ WRONG: `bash build.sh` or `bash ~/.claude/plugins/.../build.sh`
-   - ✅ CORRECT: `/cc-deploy` (uses Skill tool properly)
+   - ✅ CORRECT: `Skill(command: "claude-agent-sdk:docker-build")`
+   - For full deployment: Use `/cc-deploy` (includes change detection and approvals)
 
 2. **❌ NEVER use raw Bash for service control** - Always use `just` commands
    - ❌ WRONG: `ray stop`, `ray start`, `orb -m ray-cluster bash -c "..."`
@@ -31,7 +32,8 @@ Essential context for Claude Code when working with this repository.
    - ✅ CORRECT: `just stop && just start`
 
 **Why these rules exist:**
-- `/cc-deploy` handles change detection, approvals, and state tracking
+- `docker-build` Skill handles proper state management and error handling
+- `/cc-deploy` adds change detection, approvals, and deployment orchestration
 - `just` commands handle VM/Ray/Kodosumi coordination correctly
 - Direct script calls bypass safety checks and cause inconsistent state
 
@@ -323,6 +325,56 @@ await cleanup_actor(execution_id)
 - Main agent executes pending todos with user approvals
 - Benefits: Full visibility, individual control, progress tracking
 - Example: `/cc-setup` command
+
+### Auto-Completion Pattern
+
+**Problem**: How to automatically finalize jobs when Claude signals completion, without forcing user interaction.
+
+**Solution**: Dual-mode completion detection with check BEFORE HITL lock.
+
+**Completion Modes**:
+- `auto-complete`: Job finalizes automatically when completion detected (no HITL lock shown)
+- `continuous`: Always show HITL lock for user confirmation (even when complete)
+
+**Detection Methods** (in priority order):
+1. **SDK ResultMessage** (`agent.py:328-336`): Claude Agent SDK sends explicit `ResultMessage`
+   - Triggered by: Claude sending final response with result indication
+   - Sets: `status="complete", completion_type="sdk_result_message"`
+2. **Text Marker** (`agent.py:380-386`): Claude includes `[TASK_COMPLETE]` in response text
+   - Triggered by: Claude writing `[TASK_COMPLETE]` in any text block
+   - Sets: `status="complete", completion_type="text_marker"`
+   - Marker stripped from final output (`results.py:35-43`)
+
+**Critical Workflow** (`query.py:394-407`):
+```python
+# Display context messages
+await _display_context_messages(tracer, result.get("context_messages", []))
+
+# Check for completion BEFORE showing lock form
+if result["status"] == "complete" and config.get("completion_mode") == "auto-complete":
+    completion_type = result.get("completion_type", "unknown")
+    await tracer.markdown(f"\n✓ **Task complete** (via {completion_type}) - Finalizing job...")
+    final_result = await _finalize_job(...)
+    return dtypes.Markdown(body=final_result)
+
+# Only show HITL lock if NOT auto-completing
+user_input = await tracer.lock("claude-input", {...})
+```
+
+**Why Order Matters**:
+- ✓ **Correct**: Check completion → If complete, return immediately → Skip lock
+- ✗ **Wrong**: Show lock → User forced to interact → Then check completion (too late!)
+
+**Configuration** (`.env` and `data/config/claude_hitl_template.yaml`):
+```yaml
+COMPLETION_MODE: "auto-complete"  # or "continuous"
+```
+
+**Key Points**:
+- Completion check happens at TWO places: after initial connection AND after each user query
+- Both checks must happen BEFORE tracer.lock() to skip unnecessary user interaction
+- In auto-complete mode, users never see "Claude has finished responding" message
+- In continuous mode, users see completion message but can continue conversation
 
 ### State Tracking
 
