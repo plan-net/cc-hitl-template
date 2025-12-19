@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["claude_hitl_template"]
+packages = ["claude_hitl_template", "advanced_web_research"]

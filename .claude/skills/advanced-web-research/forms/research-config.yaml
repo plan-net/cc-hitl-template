@@ -1,0 +1,66 @@
+# Research Configuration Form
+# Collects research requirements for comprehensive web research with AI-powered analysis
+
+name: research-config
+description: Configure your research question and preferences for comprehensive web research with automatic presentation generation
+version: 1.0
+
+fields:
+  - id: research_question
+    label: Research Question
+    description: Enter your research question or topic. Be as specific as possible for best results. Examples - "What are the latest trends in AI for healthcare?", "Compare top project management tools for remote teams"
+    type: textarea
+    required: true
+    validation:
+      min_length: 1
+      max_length: 500
+      error_message: Research question must be between 1 and 500 characters
+    placeholder: "Example: What are the key factors driving electric vehicle adoption in Europe?"
+
+  - id: depth_preference
+    label: Research Depth
+    description: Choose how comprehensive you want the research to be. Quick provides overview (2-3 min, $0.20-$0.30), Balanced offers standard depth (3-5 min, $0.30-$0.40), Comprehensive delivers deep analysis (5-8 min, $0.40-$0.50)
+    type: select
+    required: false
+    options:
+      - value: quick
+        label: Quick - Fast overview with key insights
+      - value: balanced
+        label: Balanced - Standard research depth (Recommended)
+      - value: comprehensive
+        label: Comprehensive - Deep-dive analysis with extensive sources
+    default: balanced
+
+  - id: generate_presentation
+    label: Generate Presentation
+    description: Automatically create a professional PowerPoint presentation (~10 Gamma AI credits). Uncheck if you only need the research report
+    type: checkbox
+    required: false
+    default: true
+
+  - id: additional_context
+    label: Additional Context (Optional)
+    description: Provide any additional context, background information, or specific aspects you want emphasized in the research. This helps narrow scope and improve relevance
+    type: textarea
+    required: false
+    validation:
+      max_length: 1000
+      error_message: Additional context must not exceed 1000 characters
+    placeholder: "Example: Focus on enterprise solutions, emphasize cost comparisons, include regulatory considerations..."
+
+  - id: context_files
+    label: Context Files (Optional)
+    description: Upload files containing relevant context (PDFs, documents, notes). These will be analyzed to better understand your research needs
+    type: file
+    required: false
+    multiple: true
+    accepted_types:
+      - application/pdf
+      - text/plain
+      - text/markdown
+      - application/msword
+      - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+
+submit_button_text: Start Research
+
+success_message: Research request submitted successfully! Your comprehensive analysis will begin shortly.
