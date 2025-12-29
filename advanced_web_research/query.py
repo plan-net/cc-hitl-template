@@ -207,35 +207,31 @@ async def claude_conversation_lock(data: dict):
     # Extract data
     messages = data.get("messages", [])
     status = data.get("status", "ready")
-    iteration = data.get("iteration", 0)
 
-    # Build markdown content with Claude's messages
-    content = "## Claude's Response\n\n"
+    # Build clean content with Claude's messages (no technical headers)
+    content = ""
 
     for msg in messages:
         if msg["type"] == "text":
-            content += f"{msg['content']}\n\n"
-        elif msg["type"] == "tool":
-            content += f"🔧 *{msg['content']}*\n\n"
+            text = msg['content']
+            # Remove HITL markers from display
+            text = text.replace("[WAITING_FOR_INPUT]", "").replace("[TASK_COMPLETE]", "")
+            content += f"{text.strip()}\n\n"
 
-    # Add status indicator if task is complete
+    # Simple prompt for user input
     if status == "complete":
-        content += "*Claude has finished responding. You can continue the conversation or type 'done' to end.*\n\n"
-
-    # Add instructions
-    content += "---\n\n### Continue the conversation\n\n"
-    content += "Type your response to continue, or type **'done'** to end the conversation.\n"
+        content += "\n---\n*You can ask follow-up questions or type 'done' to finish.*\n"
 
     return F.Model(
         F.Markdown(content),
         F.InputArea(
             label="Your Response",
             name="response",
-            placeholder="Type your response or 'done' to finish...",
+            placeholder="Type your answer or 'done' to finish...",
             required=False,
             rows=3
         ),
-        F.Submit("Send")
+        F.Submit("Continue")
     )
 
 
@@ -298,27 +294,126 @@ async def enter(request: fastapi.Request, inputs: dict):
     generate_presentation = inputs.get("generate_presentation", True)
     additional_context = inputs.get("additional_context", "").strip()
 
-    # Build the initial prompt for Claude based on SKILL.md workflow
-    # Claude will read SKILL.md and follow the 8-phase workflow
-    initial_prompt = f"""You are the Advanced Web Research Agent.
+    # Build the initial prompt with DIRECT instructions (don't read SKILL.md)
+    initial_prompt = f"""You are an Advanced Web Research Agent. Execute the following workflow silently and show only clean results.
 
-Please read and follow the workflow in .claude/skills/advanced-web-research/SKILL.md
-
-**Research Request:**
-- Research Question: {research_question}
-- Depth Preference: {depth_preference}
+**RESEARCH REQUEST:**
+- Question: {research_question}
+- Depth: {depth_preference}
 - Generate Presentation: {generate_presentation}
-- Additional Context: {additional_context if additional_context else "None provided"}
+- Context: {additional_context if additional_context else "None"}
 
-**CRITICAL - HITL Signaling:**
-You MUST end every response with exactly ONE of these markers:
-- `[WAITING_FOR_INPUT]` - When you need human input/confirmation before proceeding
-- `[TASK_COMPLETE]` - When the entire task is finished and no more input is needed
+**STEP 1: ASK ONE QUESTION**
+Ask briefly: "Any specific focus areas or aspects you'd like me to prioritize in this research?"
+Then output [WAITING_FOR_INPUT] and wait.
 
-These markers control whether the system pauses for human input or finalizes the job.
-Always include the appropriate marker at the very end of your response.
+**STEP 2: EXECUTE EXA RESEARCH (after user responds)**
+Run this curl command silently using Bash tool:
 
-Begin with Phase 0: Validation and Setup."""
+```bash
+RESEARCH_ID=$(curl -s -X POST "https://api.exa.ai/research/v1" \\
+  -H "Authorization: Bearer cc1fea87-d577-4b91-b81f-efe42dc06218" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"instructions": "{research_question}"}}' | jq -r '.researchId')
+echo $RESEARCH_ID
+```
+
+Then poll every 10 seconds until complete:
+```bash
+curl -s "https://api.exa.ai/research/v1/$RESEARCH_ID" \\
+  -H "Authorization: Bearer cc1fea87-d577-4b91-b81f-efe42dc06218"
+```
+
+**STEP 3: SHOW FULL RESEARCH REPORT**
+Display the COMPLETE research report from the API response (output.content field).
+DO NOT summarize or shorten it. Show the ENTIRE report with all sections and citations.
+
+**STEP 4: GENERATE PRESENTATION (if {generate_presentation})**
+If presentation is enabled, follow these steps silently:
+
+4a. Create presentation via Gamma API:
+```bash
+GAMMA_RESPONSE=$(curl -s -X POST "https://public-api.gamma.app/v1.0/generations" \
+  -H "X-API-KEY: sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ" \
+  -H "Content-Type: application/json" \
+  -d '{{"inputText": "YOUR_RESEARCH_CONTENT_HERE", "format": "presentation", "numCards": 12, "exportAs": "pptx"}}')
+GENERATION_ID=$(echo $GAMMA_RESPONSE | jq -r '.generationId')
+```
+
+4b. Poll until complete (every 10 seconds):
+```bash
+RESULT=$(curl -s "https://public-api.gamma.app/v1.0/generations/$GENERATION_ID" \
+  -H "X-API-KEY: sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ")
+```
+
+4c. Download PPTX from exportUrl in response:
+```bash
+EXPORT_URL=$(echo $RESULT | jq -r '.exportUrl')
+curl -L -o /tmp/presentation.pptx "$EXPORT_URL"
+```
+
+4d. Upload to Digital Ocean Spaces for public download:
+```bash
+python3 << 'EOF'
+import boto3
+from botocore.config import Config
+from datetime import datetime
+
+# Generate filename with timestamp
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+filename = f"research_presentation_{{timestamp}}.pptx"
+
+s3 = boto3.client('s3',
+    endpoint_url="https://fra1.digitaloceanspaces.com",
+    region_name="fra1",
+    aws_access_key_id="DO801LDLPJ7J8P2W7G3T",
+    aws_secret_access_key="9EWhdDBwzDMKM9Nk3zwXQoZa89QAZgC+wYzy24l2dhQ",
+    config=Config(signature_version='s3v4'))
+
+s3.upload_file('/tmp/presentation.pptx', 'studios-general-bucket',
+    f'research-presentations/{{filename}}',
+    ExtraArgs={{'ACL': 'public-read', 'ContentType': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'}})
+
+print(f"https://studios-general-bucket.fra1.digitaloceanspaces.com/research-presentations/{{filename}}")
+EOF
+```
+
+The final CDN URL is directly downloadable (no login required)
+
+**STEP 5: FINAL OUTPUT**
+Show:
+1. The FULL research report (all sections, all citations - NOT summarized)
+2. If presentation generated, show the DO Spaces CDN download link like:
+   **Download Presentation:** [research_presentation_TIMESTAMP.pptx](https://studios-general-bucket.fra1.digitaloceanspaces.com/research-presentations/research_presentation_TIMESTAMP.pptx)
+   (This is a direct download link - no login required)
+3. [TASK_COMPLETE]
+
+IMPORTANT: Show the DO Spaces CDN link (studios-general-bucket.fra1.digitaloceanspaces.com), NOT the Gamma editor link (gamma.app/docs/...).
+
+**CRITICAL RULES:**
+- NO phase numbers or technical labels
+- NO polling status messages
+- NO generation IDs or task IDs
+- NO "Generating...", "Polling...", "Status: pending"
+- NO intermediate messages like "Thank you! I'll research...", "Now let me generate...", "Let me...", etc.
+- NO narration of what you're doing
+- Show COMPLETE research report - NEVER truncate or summarize
+- Execute silently, show only final clean results
+- ONLY show the DO Spaces CDN link for presentation (NOT gamma.app link)
+- The DO Spaces link MUST be from an actual upload - verify the file exists before showing link
+
+**FINAL OUTPUT FORMAT (NOTHING ELSE):**
+```
+[Full Research Report Here - all sections, all citations]
+
+---
+
+**Download Presentation:** [filename.pptx](DO_SPACES_URL)
+```
+
+DO NOT include any other text, greetings, or explanations in the final output.
+
+Start now with Step 1."""
 
     # Launch async research execution
     return Launch(request, "advanced_web_research.query:run_conversation", inputs={
@@ -356,39 +451,29 @@ async def run_conversation(inputs: dict, tracer: Tracer):
     # Get container image configuration for visibility
     image_config = get_container_image_config()
 
-    # Build initialization message with research info
+    # Build clean initialization message for end users
     research_question = inputs.get("research_question", "N/A")
     depth = inputs.get("depth_preference", "balanced")
 
+    # Map depth to user-friendly description
+    depth_labels = {
+        "quick": "Quick (~2-3 min)",
+        "balanced": "Balanced (~3-5 min)",
+        "comprehensive": "Comprehensive (~5-8 min)"
+    }
+    depth_label = depth_labels.get(depth, depth)
+
     init_message = f"""
-## Research Session Started
-**Research Question:** {research_question}
-**Depth:** {depth}
-**Timestamp:** {inputs["timestamp"]}
-**Execution ID:** {execution_id}
+## 🔍 Starting Research
 
+**Your Question:** {research_question}
+
+**Research Depth:** {depth_label}
+
+Please wait while we gather and analyze information from multiple sources...
 """
 
-    # Add container image info if using containers
-    if image_config["use_container"]:
-        # Truncate digest for readability (first 12 + last 6 chars)
-        digest = image_config["digest"]
-        if digest and len(digest) > 25:
-            digest_display = f"{digest[:19]}...{digest[-6:]}"
-        else:
-            digest_display = digest or "unknown"
-
-        init_message += f"""### Container Image Configuration
-**Registry Path:** `{image_config["registry_path"]}`
-**Digest:** `{digest_display}` (SHA256)
-
-Research will run in a containerized Ray Actor with baked agent configurations.
-
-"""
-
-    init_message += "Initializing Advanced Web Research Agent...\n"
-
-    # Show initial status
+    # Show clean initial status (no technical details)
     await tracer.markdown(init_message)
 
     retry_count = 0
@@ -397,10 +482,9 @@ Research will run in a containerized Ray Actor with baked agent configurations.
     try:
         while retry_count <= max_retries:
             try:
-                # Get or create actor
+                # Get or create actor (no technical messages shown to user)
                 actor = get_actor(execution_id)
                 if actor is None:
-                    await tracer.markdown("Creating Ray Actor for persistent session...")
                     # Pass current working directory to actor
                     # (Ray worker's cwd may differ from orchestration process)
                     actor = create_actor(execution_id, cwd=os.getcwd())
@@ -409,23 +493,11 @@ Research will run in a containerized Ray Actor with baked agent configurations.
                     # Actor exists (resuming after retry)
                     is_first_connect = False
 
-                # Connect or reconnect
+                # Connect or reconnect silently
                 if is_first_connect:
-                    await tracer.markdown("✓ Actor created\n\nConnecting to Claude...")
                     result = await actor.connect.remote(prompt)
                 else:
-                    # Reconnect after retry
-                    await tracer.markdown("🔄 Reconnecting to Claude...")
                     result = await actor.connect.remote(f"Continuing conversation: {prompt}")
-
-                await tracer.markdown("✓ Connected\n")
-
-                # Get and display agent metadata
-                if is_first_connect:
-                    await tracer.markdown("Loading agent configuration...")
-                    metadata = await actor.get_metadata.remote()
-                    formatted_metadata = _format_metadata(metadata)
-                    await tracer.markdown(formatted_metadata)
 
                 # Check for autonomous completion on initial connection (ResultMessage received)
                 # But DON'T auto-complete if Claude signaled it needs input
@@ -769,7 +841,7 @@ def _build_final_report(messages: list, iterations: int, reason: str) -> str:
         reason: Reason for session ending
 
     Returns:
-        Formatted markdown string with full report
+        Formatted markdown string with full report (clean, no technical details)
     """
     # Extract text content from messages
     report_content = ""
@@ -780,22 +852,8 @@ def _build_final_report(messages: list, iterations: int, reason: str) -> str:
             content = content.replace("[TASK_COMPLETE]", "").replace("[WAITING_FOR_INPUT]", "")
             report_content += content.strip() + "\n\n"
 
-    return f"""# Research Report
-
-{report_content.strip()}
-
----
-
-## Session Summary
-
-**Status:** {reason}
-**Total Interactions:** {iterations}
-**Completed at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
----
-
-*Generated by Advanced Web Research Agent*
-"""
+    # Return clean report without technical details
+    return report_content.strip()
 
 
 def _build_conversation_summary(iterations: int, reason: str) -> str:
@@ -807,20 +865,19 @@ def _build_conversation_summary(iterations: int, reason: str) -> str:
         reason: Reason for session ending
 
     Returns:
-        Formatted markdown string
+        Formatted markdown string (clean, user-friendly)
     """
-    return f"""---
-
-## Research Session Complete
-
-**Status:** {reason}
-**Total Interactions:** {iterations}
-**Ended at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
----
-
-Thank you for using Advanced Web Research Agent!
-"""
+    # Clean user-friendly messages based on reason
+    if "timed out" in reason.lower():
+        return "⏱️ **Session timed out.** Please start a new research session."
+    elif "cancelled" in reason.lower() or "ended by user" in reason.lower():
+        return "**Session ended.** Thank you for using Advanced Web Research!"
+    elif "error" in reason.lower():
+        return f"⚠️ **Something went wrong.** Please try again.\n\n*Details: {reason}*"
+    elif "empty response" in reason.lower():
+        return "**Session ended.** Thank you for using Advanced Web Research!"
+    else:
+        return "**Research complete.** Thank you for using Advanced Web Research!"
 
 
 # Ray Serve deployment wrapper for Kodosumi ServeAPI

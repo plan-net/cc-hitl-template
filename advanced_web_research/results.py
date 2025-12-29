@@ -24,14 +24,11 @@ def build_final_result(
         reason: Completion reason/status
 
     Returns:
-        Formatted markdown string
+        Formatted markdown string (clean, no technical details)
     """
-    lines = ["# Task Completed", ""]
+    lines = []
 
-    # Add main content from Claude's messages
-    lines.append("## Result")
-    lines.append("")
-
+    # Add main content from Claude's messages (clean, no extra headers)
     for msg in messages:
         if msg.get("type") == "text":
             content = msg.get("content", "")
@@ -44,23 +41,16 @@ def build_final_result(
                     lines.append(content)
                     lines.append("")
 
-    # Add file download links if any
+    # Add file download links if any (clean format)
     if files:
-        lines.append("## Generated Files")
         lines.append("")
+        lines.append("**Downloads:**")
         for filename in files:
             # Kodosumi file download URL pattern
             lines.append(f"- 📄 [{filename}](/files/download/out/{filename})")
         lines.append("")
 
-    # Add metadata footer
-    lines.append("---")
-    lines.append("")
-    lines.append(f"**Status:** {reason}")
-    lines.append(f"**Conversation turns:** {iteration}")
-    lines.append(f"**Completed:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
 
 
 def build_conversation_summary(
@@ -77,29 +67,18 @@ def build_conversation_summary(
         messages: Optional message history to include
 
     Returns:
-        Formatted markdown string
+        Formatted markdown string (clean, user-friendly)
     """
-    lines = ["# Conversation Ended", ""]
-    lines.append(f"**Reason:** {reason}")
-    lines.append(f"**Turns completed:** {iteration}")
-    lines.append("")
-
-    # Include last few messages if provided
-    if messages:
-        lines.append("## Last Messages")
-        lines.append("")
-        # Show last 3 messages
-        for msg in messages[-3:]:
-            if msg.get("type") == "text":
-                content = msg.get("content", "")
-                if content:
-                    # Truncate long messages
-                    if len(content) > 500:
-                        content = content[:500] + "..."
-                    lines.append(f"> {content}")
-                    lines.append("")
-
-    lines.append("---")
-    lines.append(f"**Timestamp:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    return "\n".join(lines)
+    # Clean user-friendly messages based on reason
+    if "timed out" in reason.lower():
+        return "⏱️ **Session timed out.** Please start a new research session."
+    elif "cancelled" in reason.lower() or "ended by user" in reason.lower():
+        return "**Session ended.** Thank you for using Advanced Web Research!"
+    elif "error" in reason.lower():
+        return "⚠️ **Something went wrong.** Please try again."
+    elif "empty response" in reason.lower():
+        return "**Session ended.** Thank you for using Advanced Web Research!"
+    elif "maximum" in reason.lower():
+        return "**Session limit reached.** Please start a new research session."
+    else:
+        return "**Research complete.** Thank you for using Advanced Web Research!"
