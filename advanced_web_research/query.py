@@ -28,6 +28,12 @@ from .results import build_final_result, build_conversation_summary
 CONVERSATION_TIMEOUT_SECONDS = 600  # 10 minutes
 MAX_MESSAGE_ITERATIONS = 50  # Safety limit to prevent infinite loops
 
+# API Keys from environment variables
+EXA_API_KEY = os.getenv("EXA_API_KEY", "")
+GAMMA_API_KEY = os.getenv("GAMMA_API_KEY", "")
+DO_SPACES_ACCESS_KEY = os.getenv("DO_SPACES_ACCESS_KEY", "")
+DO_SPACES_SECRET_KEY = os.getenv("DO_SPACES_SECRET_KEY", "")
+
 # Create ServeAPI instance
 app = ServeAPI()
 
@@ -312,7 +318,7 @@ Run this curl command silently using Bash tool:
 
 ```bash
 RESEARCH_ID=$(curl -s -X POST "https://api.exa.ai/research/v1" \\
-  -H "Authorization: Bearer cc1fea87-d577-4b91-b81f-efe42dc06218" \\
+  -H "Authorization: Bearer {EXA_API_KEY}" \\
   -H "Content-Type: application/json" \\
   -d '{{"instructions": "{research_question}"}}' | jq -r '.researchId')
 echo $RESEARCH_ID
@@ -321,7 +327,7 @@ echo $RESEARCH_ID
 Then poll every 10 seconds until complete:
 ```bash
 curl -s "https://api.exa.ai/research/v1/$RESEARCH_ID" \\
-  -H "Authorization: Bearer cc1fea87-d577-4b91-b81f-efe42dc06218"
+  -H "Authorization: Bearer {EXA_API_KEY}"
 ```
 
 **STEP 3: SHOW FULL RESEARCH REPORT**
@@ -334,7 +340,7 @@ If presentation is enabled, follow these steps silently:
 4a. Create presentation via Gamma API:
 ```bash
 GAMMA_RESPONSE=$(curl -s -X POST "https://public-api.gamma.app/v1.0/generations" \
-  -H "X-API-KEY: sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ" \
+  -H "X-API-KEY: {GAMMA_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{{"inputText": "YOUR_RESEARCH_CONTENT_HERE", "format": "presentation", "numCards": 12, "exportAs": "pptx"}}')
 GENERATION_ID=$(echo $GAMMA_RESPONSE | jq -r '.generationId')
@@ -343,7 +349,7 @@ GENERATION_ID=$(echo $GAMMA_RESPONSE | jq -r '.generationId')
 4b. Poll until complete (every 10 seconds):
 ```bash
 RESULT=$(curl -s "https://public-api.gamma.app/v1.0/generations/$GENERATION_ID" \
-  -H "X-API-KEY: sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ")
+  -H "X-API-KEY: {GAMMA_API_KEY}")
 ```
 
 4c. Download PPTX from exportUrl in response:
@@ -366,8 +372,8 @@ filename = f"research_presentation_{{timestamp}}.pptx"
 s3 = boto3.client('s3',
     endpoint_url="https://fra1.digitaloceanspaces.com",
     region_name="fra1",
-    aws_access_key_id="DO801LDLPJ7J8P2W7G3T",
-    aws_secret_access_key="9EWhdDBwzDMKM9Nk3zwXQoZa89QAZgC+wYzy24l2dhQ",
+    aws_access_key_id="{DO_SPACES_ACCESS_KEY}",
+    aws_secret_access_key="{DO_SPACES_SECRET_KEY}",
     config=Config(signature_version='s3v4'))
 
 s3.upload_file('/tmp/presentation.pptx', 'studios-general-bucket',

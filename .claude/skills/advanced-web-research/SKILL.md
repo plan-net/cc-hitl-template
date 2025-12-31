@@ -281,23 +281,23 @@ Execute comprehensive web research via Exa Research API with async task polling.
 
 **Exa Research API:**
 - Endpoint: `https://api.exa.ai/research/v1`
-- API Key: `cc1fea87-d577-4b91-b81f-efe42dc06218`
+- API Key: Set via `EXA_API_KEY` environment variable
 
 **Gamma Presentation API:**
 - Endpoint: `https://public-api.gamma.app/v1.0/generations`
-- API Key: `sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ`
+- API Key: Set via `GAMMA_API_KEY` environment variable
 - Auth Header: `X-API-KEY`
 
 **Digital Ocean Spaces (CDN Storage):**
 - Endpoint: `https://fra1.digitaloceanspaces.com`
 - Bucket: `studios-general-bucket`
 - Region: `fra1`
-- Access Key: `DO801LDLPJ7J8P2W7G3T`
-- Secret Key: `9EWhdDBwzDMKM9Nk3zwXQoZa89QAZgC+wYzy24l2dhQ`
+- Access Key: Set via `DO_SPACES_ACCESS_KEY` environment variable
+- Secret Key: Set via `DO_SPACES_SECRET_KEY` environment variable
 
 **Langfuse Tracing API:**
 - Endpoint: `http://172.211.242.223:3000/api/public/ingestion`
-- Auth: `Basic cGstbGYtMDc2NGY0MWQtOTdmZi00YTczLTljY2MtOGQ3NjNiNTg4NmU1OnNrLWxmLTY4ZWRlZjI2LTE0MWMtNDkwMS1hYjViLTJlYmZhNzk2MDJkNQ==`
+- Auth: `Basic $LANGFUSE_AUTH_TOKEN`
 
 ---
 
@@ -326,7 +326,7 @@ RESEARCH_QUESTION="<research_question>"
 # Create trace + span + first observation
 curl -s -X POST "http://172.211.242.223:3000/api/public/ingestion" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic cGstbGYtMDc2NGY0MWQtOTdmZi00YTczLTljY2MtOGQ3NjNiNTg4NmU1OnNrLWxmLTY4ZWRlZjI2LTE0MWMtNDkwMS1hYjViLTJlYmZhNzk2MDJkNQ==" \
+  -H "Authorization: Basic $LANGFUSE_AUTH_TOKEN" \
   -d "{
     \"batch\": [
       {
@@ -392,7 +392,7 @@ Topic: {research_question}
 ```bash
 # Create research task (use RESEARCH_QUESTION from Step 1)
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.exa.ai/research/v1" \
-  -H "Authorization: Bearer cc1fea87-d577-4b91-b81f-efe42dc06218" \
+  -H "Authorization: Bearer $EXA_API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"instructions\": \"$RESEARCH_QUESTION\"}")
 
@@ -425,7 +425,7 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 
 curl -s -X POST "http://172.211.242.223:3000/api/public/ingestion" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic cGstbGYtMDc2NGY0MWQtOTdmZi00YTczLTljY2MtOGQ3NjNiNTg4NmU1OnNrLWxmLTY4ZWRlZjI2LTE0MWMtNDkwMS1hYjViLTJlYmZhNzk2MDJkNQ==" \
+  -H "Authorization: Basic $LANGFUSE_AUTH_TOKEN" \
   -d "{
     \"batch\": [
       {
@@ -471,7 +471,7 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 
 curl -s -X POST "http://172.211.242.223:3000/api/public/ingestion" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic cGstbGYtMDc2NGY0MWQtOTdmZi00YTczLTljY2MtOGQ3NjNiNTg4NmU1OnNrLWxmLTY4ZWRlZjI2LTE0MWMtNDkwMS1hYjViLTJlYmZhNzk2MDJkNQ==" \
+  -H "Authorization: Basic $LANGFUSE_AUTH_TOKEN" \
   -d "{
     \"batch\": [
       {
@@ -496,7 +496,7 @@ curl -s -X POST "http://172.211.242.223:3000/api/public/ingestion" \
 ```bash
 RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
   "https://api.exa.ai/research/v1/$RESEARCH_ID" \
-  -H "Authorization: Bearer cc1fea87-d577-4b91-b81f-efe42dc06218")
+  -H "Authorization: Bearer $EXA_API_KEY")
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -512,7 +512,7 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 
 curl -s -X POST "http://172.211.242.223:3000/api/public/ingestion" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic cGstbGYtMDc2NGY0MWQtOTdmZi00YTczLTljY2MtOGQ3NjNiNTg4NmU1OnNrLWxmLTY4ZWRlZjI2LTE0MWMtNDkwMS1hYjViLTJlYmZhNzk2MDJkNQ==" \
+  -H "Authorization: Basic $LANGFUSE_AUTH_TOKEN" \
   -d "{
     \"batch\": [
       {
@@ -660,7 +660,7 @@ result = subprocess.run([
     'curl', '-s', '-X', 'POST',
     'http://172.211.242.223:3000/api/public/ingestion',
     '-H', 'Content-Type: application/json',
-    '-H', 'Authorization: Basic cGstbGYtMDc2NGY0MWQtOTdmZi00YTczLTljY2MtOGQ3NjNiNTg4NmU1OnNrLWxmLTY4ZWRlZjI2LTE0MWMtNDkwMS1hYjViLTJlYmZhNzk2MDJkNQ==',
+    '-H', 'Authorization: Basic $LANGFUSE_AUTH_TOKEN',
     '-d', json.dumps(batch_payload)
 ], capture_output=True, text=True)
 
@@ -1064,7 +1064,7 @@ Generate PPTX presentation via direct Gamma API calls and upload to Digital Ocea
 ### Gamma API Configuration
 
 **API Endpoint:** `https://public-api.gamma.app/v1.0/generations`
-**API Key:** `sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ`
+**API Key:** `$GAMMA_API_KEY`
 
 **Presentation Settings:**
 ```python
@@ -1218,7 +1218,7 @@ result = subprocess.run([
     'curl', '-s', '-w', '\\n%{http_code}',
     '-X', 'POST',
     'https://public-api.gamma.app/v1.0/generations',
-    '-H', 'X-API-KEY: sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ',
+    '-H', 'X-API-KEY: $GAMMA_API_KEY',
     '-H', 'Content-Type: application/json',
     '-d', json.dumps(payload)
 ], capture_output=True, text=True)
@@ -1268,7 +1268,7 @@ echo "Generation ID: $GENERATION_ID"
 for i in {1..30}; do
   RESPONSE=$(curl -s -X GET \
     "https://public-api.gamma.app/v1.0/generations/$GENERATION_ID" \
-    -H "X-API-KEY: sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ")
+    -H "X-API-KEY: $GAMMA_API_KEY")
 
   # Parse status using Python for reliability
   STATUS=$(echo "$RESPONSE" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('status', 'unknown'))" 2>/dev/null || echo "error")
@@ -1375,8 +1375,8 @@ fi
 DO_ENDPOINT="https://fra1.digitaloceanspaces.com"
 DO_BUCKET="studios-general-bucket"
 DO_REGION="fra1"
-DO_ACCESS_KEY="DO801LDLPJ7J8P2W7G3T"
-DO_SECRET_KEY="9EWhdDBwzDMKM9Nk3zwXQoZa89QAZgC+wYzy24l2dhQ"
+DO_ACCESS_KEY="$DO_SPACES_ACCESS_KEY"
+DO_SECRET_KEY="$DO_SPACES_SECRET_KEY"
 
 # Read file info
 source /tmp/gamma_urls.env
@@ -1399,8 +1399,8 @@ from datetime import datetime
 endpoint = "https://fra1.digitaloceanspaces.com"
 bucket = "studios-general-bucket"
 region = "fra1"
-access_key = "DO801LDLPJ7J8P2W7G3T"
-secret_key = "9EWhdDBwzDMKM9Nk3zwXQoZa89QAZgC+wYzy24l2dhQ"
+access_key = "$DO_SPACES_ACCESS_KEY"
+secret_key = "$DO_SPACES_SECRET_KEY"
 
 # Read file info
 pptx_file = None
@@ -1473,8 +1473,8 @@ fi
 
 # Use awscli if available
 if command -v aws &> /dev/null; then
-  export AWS_ACCESS_KEY_ID="DO801LDLPJ7J8P2W7G3T"
-  export AWS_SECRET_ACCESS_KEY="9EWhdDBwzDMKM9Nk3zwXQoZa89QAZgC+wYzy24l2dhQ"
+  export AWS_ACCESS_KEY_ID="$DO_SPACES_ACCESS_KEY"
+  export AWS_SECRET_ACCESS_KEY="$DO_SPACES_SECRET_KEY"
 
   aws s3 cp "$PPTX_FILE" \
     "s3://studios-general-bucket/research-presentations/$PPTX_FILENAME" \
@@ -2010,7 +2010,7 @@ No external packages required.
 **Exa Research API (https://api.exa.ai/research/v1):**
 - Invoked: Phase 2 Step 1 & Step 2 via Bash/curl
 - Authentication: Bearer token in Authorization header
-- API Key: cc1fea87-d577-4b91-b81f-efe42dc06218
+- API Key: $EXA_API_KEY
 - Method: POST to create task, GET to poll status
 - Returns: Async task ID (researchId), then research report markdown with sources
 - Error handling: HTTP status codes, JSON error responses
