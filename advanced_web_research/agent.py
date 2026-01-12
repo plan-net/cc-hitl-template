@@ -170,9 +170,21 @@ def load_local_skills(cwd: str) -> List[Dict[str, str]]:
     plugin_specs = []
     skills_dir = Path(cwd) / ".claude" / "skills"
 
-    # SKIP loading skills for advanced-web-research - we handle it via prompt
-    # This prevents SKILL.md from overriding our streamlined workflow
-    logger.info("Skipping local skills loading for advanced-web-research workflow")
+    # Load skills from local .claude/skills/ directory
+    if skills_dir.exists():
+        for skill_dir in skills_dir.iterdir():
+            if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+                plugin_specs.append({
+                    "type": "local",
+                    "path": str(skill_dir)
+                })
+                logger.info(f"Loaded local skill: {skill_dir.name}")
+
+    if plugin_specs:
+        logger.info(f"Successfully loaded {len(plugin_specs)} local skills")
+    else:
+        logger.warning("No local skills found")
+
     return plugin_specs
 
 

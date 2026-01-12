@@ -300,126 +300,18 @@ async def enter(request: fastapi.Request, inputs: dict):
     generate_presentation = inputs.get("generate_presentation", True)
     additional_context = inputs.get("additional_context", "").strip()
 
-    # Build the initial prompt with DIRECT instructions (don't read SKILL.md)
-    initial_prompt = f"""You are an Advanced Web Research Agent. Execute the following workflow silently and show only clean results.
+    # Build initial prompt invoking the advanced-web-research skill
+    initial_prompt = f"""Execute the advanced-web-research skill for this request.
 
-**RESEARCH REQUEST:**
+**Research Configuration:**
 - Question: {research_question}
 - Depth: {depth_preference}
 - Generate Presentation: {generate_presentation}
-- Context: {additional_context if additional_context else "None"}
+- Additional Context: {additional_context if additional_context else "None"}
 
-**STEP 1: ASK ONE QUESTION**
-Ask briefly: "Any specific focus areas or aspects you'd like me to prioritize in this research?"
-Then output [WAITING_FOR_INPUT] and wait.
+Follow the workflow defined in .claude/skills/advanced-web-research/SKILL.md.
 
-**STEP 2: EXECUTE EXA RESEARCH (after user responds)**
-Run this curl command silently using Bash tool:
-
-```bash
-RESEARCH_ID=$(curl -s -X POST "https://api.exa.ai/research/v1" \\
-  -H "Authorization: Bearer {EXA_API_KEY}" \\
-  -H "Content-Type: application/json" \\
-  -d '{{"instructions": "{research_question}"}}' | jq -r '.researchId')
-echo $RESEARCH_ID
-```
-
-Then poll every 10 seconds until complete:
-```bash
-curl -s "https://api.exa.ai/research/v1/$RESEARCH_ID" \\
-  -H "Authorization: Bearer {EXA_API_KEY}"
-```
-
-**STEP 3: SHOW FULL RESEARCH REPORT**
-Display the COMPLETE research report from the API response (output.content field).
-DO NOT summarize or shorten it. Show the ENTIRE report with all sections and citations.
-
-**STEP 4: GENERATE PRESENTATION (if {generate_presentation})**
-If presentation is enabled, follow these steps silently:
-
-4a. Create presentation via Gamma API:
-```bash
-GAMMA_RESPONSE=$(curl -s -X POST "https://public-api.gamma.app/v1.0/generations" \
-  -H "X-API-KEY: {GAMMA_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{{"inputText": "YOUR_RESEARCH_CONTENT_HERE", "format": "presentation", "numCards": 12, "exportAs": "pptx"}}')
-GENERATION_ID=$(echo $GAMMA_RESPONSE | jq -r '.generationId')
-```
-
-4b. Poll until complete (every 10 seconds):
-```bash
-RESULT=$(curl -s "https://public-api.gamma.app/v1.0/generations/$GENERATION_ID" \
-  -H "X-API-KEY: {GAMMA_API_KEY}")
-```
-
-4c. Download PPTX from exportUrl in response:
-```bash
-EXPORT_URL=$(echo $RESULT | jq -r '.exportUrl')
-curl -L -o /tmp/presentation.pptx "$EXPORT_URL"
-```
-
-4d. Upload to Digital Ocean Spaces for public download:
-```bash
-python3 << 'EOF'
-import boto3
-from botocore.config import Config
-from datetime import datetime
-
-# Generate filename with timestamp
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-filename = f"research_presentation_{{timestamp}}.pptx"
-
-s3 = boto3.client('s3',
-    endpoint_url="https://fra1.digitaloceanspaces.com",
-    region_name="fra1",
-    aws_access_key_id="{DO_SPACES_ACCESS_KEY}",
-    aws_secret_access_key="{DO_SPACES_SECRET_KEY}",
-    config=Config(signature_version='s3v4'))
-
-s3.upload_file('/tmp/presentation.pptx', 'studios-general-bucket',
-    f'research-presentations/{{filename}}',
-    ExtraArgs={{'ACL': 'public-read', 'ContentType': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'}})
-
-print(f"https://studios-general-bucket.fra1.digitaloceanspaces.com/research-presentations/{{filename}}")
-EOF
-```
-
-The final CDN URL is directly downloadable (no login required)
-
-**STEP 5: FINAL OUTPUT**
-Show:
-1. The FULL research report (all sections, all citations - NOT summarized)
-2. If presentation generated, show the DO Spaces CDN download link like:
-   **Download Presentation:** [research_presentation_TIMESTAMP.pptx](https://studios-general-bucket.fra1.digitaloceanspaces.com/research-presentations/research_presentation_TIMESTAMP.pptx)
-   (This is a direct download link - no login required)
-3. [TASK_COMPLETE]
-
-IMPORTANT: Show the DO Spaces CDN link (studios-general-bucket.fra1.digitaloceanspaces.com), NOT the Gamma editor link (gamma.app/docs/...).
-
-**CRITICAL RULES:**
-- NO phase numbers or technical labels
-- NO polling status messages
-- NO generation IDs or task IDs
-- NO "Generating...", "Polling...", "Status: pending"
-- NO intermediate messages like "Thank you! I'll research...", "Now let me generate...", "Let me...", etc.
-- NO narration of what you're doing
-- Show COMPLETE research report - NEVER truncate or summarize
-- Execute silently, show only final clean results
-- ONLY show the DO Spaces CDN link for presentation (NOT gamma.app link)
-- The DO Spaces link MUST be from an actual upload - verify the file exists before showing link
-
-**FINAL OUTPUT FORMAT (NOTHING ELSE):**
-```
-[Full Research Report Here - all sections, all citations]
-
----
-
-**Download Presentation:** [filename.pptx](DO_SPACES_URL)
-```
-
-DO NOT include any other text, greetings, or explanations in the final output.
-
-Start now with Step 1."""
+Start with Step 1 (Focus Areas Clarification)."""
 
     # Launch async research execution
     return Launch(request, "advanced_web_research.query:run_conversation", inputs={
