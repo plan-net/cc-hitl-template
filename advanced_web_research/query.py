@@ -485,7 +485,7 @@ Please wait while we gather and analyze information from multiple sources...
     # Initialize Langfuse trace for this research session
     langfuse_client = None
     try:
-        from .tracing import get_langfuse_client
+        from claude_hitl_template.tracing import get_langfuse_client
         langfuse_client = get_langfuse_client()
         if langfuse_client:
             trace = langfuse_client.trace(
