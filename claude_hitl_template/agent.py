@@ -17,6 +17,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional, Dict, List
+from .tracing import create_span, update_span, create_generation, traced_span
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
@@ -174,14 +175,22 @@ class ClaudeSessionActor:
     5. Actor killed via cleanup_actor()
     """
 
-    def __init__(self, cwd: Optional[str] = None, permission_mode: str = "acceptEdits"):
+    def __init__(
+        self,
+        cwd: Optional[str] = None,
+        permission_mode: str = "acceptEdits",
+        trace_id: Optional[str] = None
+    ):
         """
         Initialize actor (subprocess not started yet).
 
         Args:
             cwd: Working directory for Claude SDK (default: current dir)
             permission_mode: Claude permission mode ("acceptEdits" or "plan")
+            trace_id: Optional Langfuse trace ID for this session
         """
+        self.trace_id = trace_id
+        self.current_span_id: Optional[str] = None
         # Check if running in container
         # In container, HOME is set to /app/template_user by Dockerfile ENV
         is_containerized = os.getenv("HOME") == "/app/template_user"
@@ -268,12 +277,13 @@ class ClaudeSessionActor:
         # Collect initial response
         return await self._collect_response()
 
-    async def query(self, message: str) -> Dict:
+    async def query(self, message: str, parent_span_id: Optional[str] = None) -> Dict:
         """
         Send user message and collect Claude's response.
 
         Args:
             message: User's text input
+            parent_span_id: Optional parent span ID for tracing
 
         Returns:
             {
@@ -288,8 +298,32 @@ class ClaudeSessionActor:
             raise RuntimeError("Not connected. Call connect() first.")
 
         self._update_activity()
+
+        # Create span for this query/response cycle
+        if self.trace_id:
+            self.current_span_id = create_span(
+                trace_id=self.trace_id,
+                name="Query/Response Cycle",
+                input_data={"message": message[:200]},  # Truncate long messages
+                metadata={"full_message_length": len(message)},
+                parent_observation_id=parent_span_id
+            )
+
         await self.client.query(message)
-        return await self._collect_response()
+        result = await self._collect_response()
+
+        # Update span with result
+        if self.current_span_id:
+            update_span(
+                span_id=self.current_span_id,
+                output_data={
+                    "status": result["status"],
+                    "num_user_messages": len(result.get("user_messages", [])),
+                    "num_context_messages": len(result.get("context_messages", []))
+                }
+            )
+
+        return result
 
     async def _collect_response(self) -> Dict:
         """
@@ -343,6 +377,16 @@ class ClaudeSessionActor:
                     "data": message.data
                 })
 
+                # Trace system messages
+                if self.trace_id and self.current_span_id:
+                    create_generation(
+                        trace_id=self.trace_id,
+                        name=f"System: {message.subtype}",
+                        input_data={"subtype": message.subtype},
+                        output_data={"data": message.data},
+                        parent_observation_id=self.current_span_id
+                    )
+
             # Process assistant messages
             if isinstance(message, AssistantMessage):
                 for block in message.content:
@@ -352,6 +396,17 @@ class ClaudeSessionActor:
                             "type": "text",
                             "content": block.text
                         })
+
+                        # Trace text responses
+                        if self.trace_id and self.current_span_id:
+                            create_generation(
+                                trace_id=self.trace_id,
+                                name="Text Response",
+                                output_data={"text": block.text[:500]},  # Truncate for trace
+                                metadata={"full_length": len(block.text)},
+                                parent_observation_id=self.current_span_id
+                            )
+
                     elif isinstance(block, ThinkingBlock):
                         # Extended thinking/reasoning output (context only)
                         context_messages.append({
@@ -359,6 +414,20 @@ class ClaudeSessionActor:
                             "content": block.thinking,
                             "signature": block.signature
                         })
+
+                        # Trace thinking blocks
+                        if self.trace_id and self.current_span_id:
+                            create_generation(
+                                trace_id=self.trace_id,
+                                name="Thinking",
+                                output_data={"thinking": block.thinking[:500]},  # Truncate for trace
+                                metadata={
+                                    "signature": block.signature,
+                                    "full_length": len(block.thinking)
+                                },
+                                parent_observation_id=self.current_span_id
+                            )
+
                     elif isinstance(block, ToolUseBlock):
                         # Tool execution request (context only)
                         context_messages.append({
@@ -367,6 +436,17 @@ class ClaudeSessionActor:
                             "id": block.id,
                             "input": block.input
                         })
+
+                        # Trace tool uses
+                        if self.trace_id and self.current_span_id:
+                            create_generation(
+                                trace_id=self.trace_id,
+                                name=f"Tool Use: {block.name}",
+                                input_data={"tool": block.name, "input": block.input},
+                                metadata={"tool_use_id": block.id},
+                                parent_observation_id=self.current_span_id
+                            )
+
                     elif isinstance(block, ToolResultBlock):
                         # Tool execution result (context only)
                         context_messages.append({
@@ -375,6 +455,26 @@ class ClaudeSessionActor:
                             "content": block.content,
                             "is_error": block.is_error or False
                         })
+
+                        # Trace tool results
+                        if self.trace_id and self.current_span_id:
+                            # Truncate large tool results
+                            content_str = str(block.content)
+                            truncated_content = content_str[:1000] if len(content_str) > 1000 else content_str
+
+                            create_generation(
+                                trace_id=self.trace_id,
+                                name=f"Tool Result: {'Error' if block.is_error else 'Success'}",
+                                output_data={
+                                    "content": truncated_content,
+                                    "is_error": block.is_error or False
+                                },
+                                metadata={
+                                    "tool_use_id": block.tool_use_id,
+                                    "full_length": len(content_str)
+                                },
+                                parent_observation_id=self.current_span_id
+                            )
 
         # Stream exhausted - Check for text-based completion signal (fallback)
         if self._check_text_completion_signal(user_messages):
@@ -551,7 +651,12 @@ class ClaudeSessionActor:
 
 # Helper functions for actor management
 
-def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Optional[bool] = None) -> ray.actor.ActorHandle:
+def create_actor(
+    execution_id: str,
+    cwd: Optional[str] = None,
+    use_container: Optional[bool] = None,
+    trace_id: Optional[str] = None
+) -> ray.actor.ActorHandle:
     """
     Create a new ClaudeSessionActor with unique name.
 
@@ -568,6 +673,7 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
         use_container: If True, run actor in container with isolated .claude folders.
                       If None (default), auto-detects from CONTAINER_IMAGE_URI env var.
                       Requires image URI with digest in environment configuration.
+        trace_id: Optional Langfuse trace ID for this session
 
     Returns:
         Ray actor handle
@@ -619,7 +725,7 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
         max_restarts=0,             # Don't auto-restart (subprocess can't recover)
         num_cpus=1,                 # 1 CPU for actor + subprocess
         memory=1024 * 1024 * 1024   # 1GB (recommended by Claude SDK docs)
-    ).remote(cwd=actor_cwd)
+    ).remote(cwd=actor_cwd, trace_id=trace_id)
 
 
 def get_actor(execution_id: str) -> Optional[ray.actor.ActorHandle]:

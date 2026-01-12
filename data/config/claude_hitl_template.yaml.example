@@ -22,6 +22,13 @@ runtime_env:
     # Ray Serve YAML does NOT support variable substitution
     ANTHROPIC_API_KEY: "sk-ant-...copy-your-actual-key-from-env-file..."
 
+    # Langfuse Observability (Optional - for conversation tracing)
+    # Copy these EXACT literal values from .env if you want to enable tracing
+    # If not provided, tracing will be silently disabled (conversations continue normally)
+    LANGFUSE_PUBLIC_KEY: "pk-lf-...copy-from-env-file..."
+    LANGFUSE_SECRET_KEY: "sk-lf-...copy-from-env-file..."
+    LANGFUSE_HOST: "http://your-langfuse-host:3000"
+
 # Ray Serve deployment configuration
 # Adjust these based on your resource requirements
 num_replicas: 1

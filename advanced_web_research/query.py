@@ -482,6 +482,38 @@ Please wait while we gather and analyze information from multiple sources...
     # Show clean initial status (no technical details)
     await tracer.markdown(init_message)
 
+    # Initialize Langfuse trace for this research session
+    langfuse_client = None
+    try:
+        from .tracing import get_langfuse_client
+        langfuse_client = get_langfuse_client()
+        if langfuse_client:
+            trace = langfuse_client.trace(
+                id=execution_id,
+                name="Advanced Web Research Session",
+                input={"research_question": research_question, "depth": depth},
+                metadata={
+                    "service": "advanced_web_research",
+                    "execution_id": execution_id
+                }
+            )
+            langfuse_client.flush()
+    except Exception as e:
+        # Silently continue if tracing fails
+        pass
+
+    # Helper function to update trace with final output
+    def update_trace_output(output_data: dict):
+        try:
+            if langfuse_client:
+                langfuse_client.trace(
+                    id=execution_id,
+                    output=output_data
+                )
+                langfuse_client.flush()
+        except:
+            pass
+
     retry_count = 0
     max_retries = 1
 
@@ -517,6 +549,14 @@ Please wait while we gather and analyze information from multiple sources...
                             iteration=1,
                             config=config
                         )
+                        # Update Langfuse trace with final output
+                        update_trace_output({
+                            "status": "completed",
+                            "completion_reason": "auto_complete_initial",
+                            "completion_type": completion_type,
+                            "iterations": 1,
+                            "full_report": final_result
+                        })
                         return dtypes.Markdown(body=final_result)
 
                 # Main conversation loop
@@ -555,6 +595,13 @@ Please wait while we gather and analyze information from multiple sources...
                         # Include the last Claude response (the report) in final output
                         last_messages = result.get("user_messages", [])
                         summary = _build_final_report(last_messages, iteration, "✓ Research completed successfully")
+                        # Update Langfuse trace with final output
+                        update_trace_output({
+                            "status": "completed",
+                            "completion_reason": "user_terminated",
+                            "iterations": iteration,
+                            "full_report": summary
+                        })
                         return dtypes.Markdown(body=summary)
 
                     if not response_text:
@@ -577,6 +624,14 @@ Please wait while we gather and analyze information from multiple sources...
                                 iteration=iteration,
                                 config=config
                             )
+                            # Update Langfuse trace with final output
+                            update_trace_output({
+                                "status": "completed",
+                                "completion_reason": "auto_complete",
+                                "completion_type": completion_type,
+                                "iterations": iteration,
+                                "full_report": final_result
+                            })
                             return dtypes.Markdown(body=final_result)
 
                 # Max iterations check

@@ -1,25 +1,24 @@
 # Ray Serve configuration for Advanced Web Research Agent
-# Deploy with: serve deploy data/config/advanced_web_research.yaml
 
-# HTTP options
-http_options:
-  host: 0.0.0.0
-  port: 8000
-
-# Applications to deploy
 applications:
   - name: advanced_web_research
     route_prefix: /research
     import_path: advanced_web_research.query:fast_app
-
-    # Runtime environment configuration
-    # Note: For local development, Claude SDK uses CLI auth (via `claude login`)
-    # For production with containers, set ANTHROPIC_API_KEY in runtime_env
-    # runtime_env:
-    #   env_vars:
-    #     ANTHROPIC_API_KEY: "sk-ant-your-actual-key-here"
-
-    # Deployment options
+    
+    runtime_env:
+      env_vars:
+        # API Keys for research and presentation
+        EXA_API_KEY: "cc1fea87-d577-4b91-b81f-efe42dc06218"
+        GAMMA_API_KEY: "sk-gamma-VwunmzXHtcPnAthbLqpB7HpTKnkrcdWCbGREM3OTLQ"
+        DO_SPACES_ACCESS_KEY: "DO801LDLPJ7J8P2W7G3T"
+        DO_SPACES_SECRET_KEY: "9EWhdDBwzDMKM9Nk3zwXQoZa89QAZgC+wYzy24l2dhQ"
+        
+        # Langfuse Observability
+        LANGFUSE_PUBLIC_KEY: "pk-lf-0764f41d-97ff-4a73-9ccc-8d763b5886e5"
+        LANGFUSE_SECRET_KEY: "sk-lf-68edef26-141c-4901-ab5b-2ebfa79602d5"
+        LANGFUSE_HOST: "http://172.211.242.223:3000"
+        LANGFUSE_AUTH_TOKEN: "cGstbGYtMDc2NGY0MWQtOTdmZi00YTczLTljY2MtOGQ3NjNiNTg4NmU1OnNrLWxmLTY4ZWRlZjI2LTE0MWMtNDkwMS1hYjViLTJlYmZhNzk2MDJkNQ=="
+    
     deployments:
       - name: AdvancedWebResearch
         num_replicas: 1

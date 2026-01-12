@@ -22,6 +22,7 @@ from .agent import create_actor, get_actor, cleanup_actor, get_container_image_c
 from .config import load_kodosumi_config, get_file_exclusions
 from .files import scan_generated_files, upload_files_to_kodosumi
 from .results import build_final_result, build_conversation_summary
+from .tracing import TracingContext, create_span, update_span, create_event, traced_span
 
 # Configuration
 CONVERSATION_TIMEOUT_SECONDS = 600  # 10 minutes
@@ -302,6 +303,19 @@ async def run_conversation(inputs: dict, tracer: Tracer):
     # Get container image configuration for visibility
     image_config = get_container_image_config()
 
+    # Initialize tracing context
+    trace_metadata = {
+        "execution_id": execution_id,
+        "container_image": image_config.get("digest", "native"),
+        "use_container": image_config.get("use_container", False)
+    }
+
+    trace_context = TracingContext(
+        execution_id=execution_id,
+        initial_prompt=prompt,
+        metadata=trace_metadata
+    )
+
     # Build initialization message with image info
     init_message = f"""
 ## Conversation Started
@@ -335,144 +349,268 @@ This conversation will run in a containerized Ray Actor with baked `.claude` con
     retry_count = 0
     max_retries = 1
 
-    try:
-        while retry_count <= max_retries:
-            try:
-                # Get or create actor
-                actor = get_actor(execution_id)
-                if actor is None:
-                    await tracer.markdown("Creating Ray Actor for persistent session...")
-                    # Pass current working directory to actor
-                    # (Ray worker's cwd may differ from orchestration process)
-                    actor = create_actor(execution_id, cwd=os.getcwd())
-                    is_first_connect = True
-                else:
-                    # Actor exists (resuming after retry)
-                    is_first_connect = False
+    # Start tracing context (creates root trace)
+    with trace_context:
+        try:
+            while retry_count <= max_retries:
+                try:
+                    # Get or create actor
+                    actor = get_actor(execution_id)
+                    if actor is None:
+                        await tracer.markdown("Creating Ray Actor for persistent session...")
+                        # Pass current working directory to actor
+                        # (Ray worker's cwd may differ from orchestration process)
+                        # Pass trace_id to actor for SDK-level tracing
+                        actor = create_actor(
+                            execution_id,
+                            cwd=os.getcwd(),
+                            trace_id=trace_context.trace_id
+                        )
+                        is_first_connect = True
+                    else:
+                        # Actor exists (resuming after retry)
+                        is_first_connect = False
 
-                # Connect or reconnect
-                if is_first_connect:
-                    await tracer.markdown("✓ Actor created\n\nConnecting to Claude...")
-                    result = await actor.connect.remote(prompt)
-                else:
-                    # Reconnect after retry
-                    await tracer.markdown("🔄 Reconnecting to Claude...")
-                    result = await actor.connect.remote(f"Continuing conversation: {prompt}")
+                    # Connect or reconnect
+                    if is_first_connect:
+                        await tracer.markdown("✓ Actor created\n\nConnecting to Claude...")
+                        result = await actor.connect.remote(prompt)
+                    else:
+                        # Reconnect after retry
+                        await tracer.markdown("🔄 Reconnecting to Claude...")
+                        result = await actor.connect.remote(f"Continuing conversation: {prompt}")
 
-                await tracer.markdown("✓ Connected\n")
+                    await tracer.markdown("✓ Connected\n")
 
-                # Get and display agent metadata
-                if is_first_connect:
-                    await tracer.markdown("Loading agent configuration...")
-                    metadata = await actor.get_metadata.remote()
-                    formatted_metadata = _format_metadata(metadata)
-                    await tracer.markdown(formatted_metadata)
+                    # Get and display agent metadata
+                    if is_first_connect:
+                        await tracer.markdown("Loading agent configuration...")
+                        metadata = await actor.get_metadata.remote()
+                        formatted_metadata = _format_metadata(metadata)
+                        await tracer.markdown(formatted_metadata)
 
-                # Check for autonomous completion on initial connection (ResultMessage received)
-                if result["status"] == "complete" and config.get("completion_mode") == "auto-complete":
-                    completion_type = result.get("completion_type", "unknown")
-                    await tracer.markdown(f"\n✓ **Task complete** (via {completion_type}) - Finalizing job...")
-                    final_result = await _finalize_job(
-                        tracer=tracer,
-                        messages=result.get("user_messages", []),
-                        iteration=1,
-                        config=config
-                    )
-                    return dtypes.Markdown(body=final_result)
-
-                # Main conversation loop
-                iteration = 0
-                while iteration < MAX_MESSAGE_ITERATIONS:
-                    iteration += 1
-
-                    # Check timeout
-                    is_timeout = await actor.check_timeout.remote()
-                    if is_timeout:
-                        summary = _build_conversation_summary(iteration, "⏱️ Session timed out (11 minutes idle)")
-                        return dtypes.Markdown(body=summary)
-
-                    # Display context messages in admin panel (thinking, tool results, etc.)
-                    await _display_context_messages(tracer, result.get("context_messages", []))
-
-                    # HITL pause - Pass only user-facing messages to lock handler
-                    user_input = await tracer.lock(
-                        "claude-input",
-                        {
-                            "iteration": iteration,
-                            "messages": result.get("user_messages", []),
-                            "status": result["status"]
-                        }
-                    )
-
-                    # Check for cancellation
-                    if not user_input or user_input.get("cancelled"):
-                        summary = _build_conversation_summary(iteration, "⏹️ Conversation ended by user")
-                        return dtypes.Markdown(body=summary)
-
-                    response_text = user_input.get("response", "").strip()
-
-                    # Check for termination keywords
-                    if response_text.lower() in ["done", "exit", "quit", "stop"]:
-                        summary = _build_conversation_summary(iteration, "✓ Conversation completed successfully")
-                        return dtypes.Markdown(body=summary)
-
-                    if not response_text:
-                        summary = _build_conversation_summary(iteration, "⚠️ Empty response - conversation ended")
-                        return dtypes.Markdown(body=summary)
-
-                    # Send to Claude
-                    await tracer.markdown(f"\n**You:** {response_text}\n\n*Waiting for Claude's response...*\n")
-                    result = await actor.query.remote(response_text)
-
-                    # Check for autonomous completion after query
+                    # Check for autonomous completion on initial connection (ResultMessage received)
                     if result["status"] == "complete" and config.get("completion_mode") == "auto-complete":
                         completion_type = result.get("completion_type", "unknown")
                         await tracer.markdown(f"\n✓ **Task complete** (via {completion_type}) - Finalizing job...")
                         final_result = await _finalize_job(
                             tracer=tracer,
                             messages=result.get("user_messages", []),
-                            iteration=iteration,
+                            iteration=1,
                             config=config
                         )
                         return dtypes.Markdown(body=final_result)
 
-                # Max iterations check
-                if iteration >= MAX_MESSAGE_ITERATIONS:
-                    summary = _build_conversation_summary(iteration, f"⚠️ Maximum iteration limit reached ({MAX_MESSAGE_ITERATIONS})")
-                    return dtypes.Markdown(body=summary)
+                    # Main conversation loop
+                    iteration = 0
+                    while iteration < MAX_MESSAGE_ITERATIONS:
+                        iteration += 1
 
-                # Success - exit retry loop (this should be unreachable now)
-                break
+                        # Create span for this HITL iteration
+                        with traced_span(
+                            trace_id=trace_context.trace_id,
+                            name=f"HITL Iteration #{iteration}",
+                            input_data={"iteration": iteration},
+                            metadata={"max_iterations": MAX_MESSAGE_ITERATIONS}
+                        ) as iteration_span_id:
 
-            except ray.exceptions.RayActorError as e:
-                # Actor crashed
-                retry_count += 1
-                if retry_count <= max_retries:
-                    await tracer.markdown(
-                        f"\n⚠️ **Session crashed. Retrying ({retry_count}/{max_retries})...**\n"
-                    )
-                    # Kill crashed actor (new one created in next iteration)
-                    try:
-                        await cleanup_actor(execution_id)
-                    except:
-                        pass
-                else:
-                    summary = _build_conversation_summary(0, "❌ Session failed after retries")
-                    return dtypes.Markdown(body=summary)
+                            # Check timeout
+                            is_timeout = await actor.check_timeout.remote()
+                            if is_timeout:
+                                # Log timeout event
+                                if trace_context.trace_id:
+                                    create_event(
+                                        trace_id=trace_context.trace_id,
+                                        name="Conversation Timeout",
+                                        metadata={"iteration": iteration},
+                                        parent_observation_id=iteration_span_id,
+                                        level="WARNING"
+                                    )
+                                summary = _build_conversation_summary(iteration, "⏱️ Session timed out (11 minutes idle)")
+                                trace_context.update_output({
+                                    "completion_reason": "timeout",
+                                    "iterations": iteration
+                                })
+                                return dtypes.Markdown(body=summary)
 
-        # If we reach here, conversation loop exited normally
-        # This should not happen with current logic but handle it gracefully
-        summary = _build_conversation_summary(iteration, "✓ Conversation completed")
-        return dtypes.Markdown(body=summary)
+                            # Display context messages in admin panel (thinking, tool results, etc.)
+                            await _display_context_messages(tracer, result.get("context_messages", []))
 
-    except Exception as e:
-        # Handle any errors with proper completion
-        summary = _build_conversation_summary(0, f"❌ Error: {str(e)[:100]}")
-        return dtypes.Markdown(body=summary)
+                            # HITL pause - Pass only user-facing messages to lock handler
+                            if trace_context.trace_id:
+                                create_event(
+                                    trace_id=trace_context.trace_id,
+                                    name="HITL Pause",
+                                    input_data={
+                                        "iteration": iteration,
+                                        "num_messages": len(result.get("user_messages", [])),
+                                        "status": result["status"]
+                                    },
+                                    parent_observation_id=iteration_span_id
+                                )
 
-    finally:
-        # Always cleanup actor
-        await cleanup_actor(execution_id)
+                            user_input = await tracer.lock(
+                                "claude-input",
+                                {
+                                    "iteration": iteration,
+                                    "messages": result.get("user_messages", []),
+                                    "status": result["status"]
+                                }
+                            )
+
+                            # Check for cancellation
+                            if not user_input or user_input.get("cancelled"):
+                                if trace_context.trace_id:
+                                    create_event(
+                                        trace_id=trace_context.trace_id,
+                                        name="User Cancelled",
+                                        metadata={"iteration": iteration},
+                                        parent_observation_id=iteration_span_id
+                                    )
+                                summary = _build_conversation_summary(iteration, "⏹️ Conversation ended by user")
+                                trace_context.update_output({
+                                    "completion_reason": "user_cancelled",
+                                    "iterations": iteration
+                                })
+                                return dtypes.Markdown(body=summary)
+
+                            response_text = user_input.get("response", "").strip()
+
+                            # Check for termination keywords
+                            if response_text.lower() in ["done", "exit", "quit", "stop"]:
+                                if trace_context.trace_id:
+                                    create_event(
+                                        trace_id=trace_context.trace_id,
+                                        name="User Exit Command",
+                                        input_data={"command": response_text},
+                                        parent_observation_id=iteration_span_id
+                                    )
+                                summary = _build_conversation_summary(iteration, "✓ Conversation completed successfully")
+                                trace_context.update_output({
+                                    "completion_reason": "user_exit",
+                                    "iterations": iteration
+                                })
+                                return dtypes.Markdown(body=summary)
+
+                            if not response_text:
+                                summary = _build_conversation_summary(iteration, "⚠️ Empty response - conversation ended")
+                                trace_context.update_output({
+                                    "completion_reason": "empty_response",
+                                    "iterations": iteration
+                                })
+                                return dtypes.Markdown(body=summary)
+
+                            # Log user input
+                            if trace_context.trace_id:
+                                create_event(
+                                    trace_id=trace_context.trace_id,
+                                    name="User Input",
+                                    input_data={"response": response_text[:200]},
+                                    metadata={"full_length": len(response_text)},
+                                    parent_observation_id=iteration_span_id
+                                )
+
+                            # Send to Claude
+                            await tracer.markdown(f"\n**You:** {response_text}\n\n*Waiting for Claude's response...*\n")
+                            result = await actor.query.remote(response_text, parent_span_id=iteration_span_id)
+
+                        # Check for autonomous completion after query
+                        if result["status"] == "complete" and config.get("completion_mode") == "auto-complete":
+                            completion_type = result.get("completion_type", "unknown")
+                            if trace_context.trace_id:
+                                create_event(
+                                    trace_id=trace_context.trace_id,
+                                    name="Autonomous Completion",
+                                    metadata={"completion_type": completion_type, "iteration": iteration}
+                                )
+                            await tracer.markdown(f"\n✓ **Task complete** (via {completion_type}) - Finalizing job...")
+                            final_result = await _finalize_job(
+                                tracer=tracer,
+                                messages=result.get("user_messages", []),
+                                iteration=iteration,
+                                config=config
+                            )
+                            trace_context.update_output({
+                                "completion_reason": "autonomous",
+                                "completion_type": completion_type,
+                                "iterations": iteration
+                            })
+                            return dtypes.Markdown(body=final_result)
+
+                    # Max iterations check
+                    if iteration >= MAX_MESSAGE_ITERATIONS:
+                        if trace_context.trace_id:
+                            create_event(
+                                trace_id=trace_context.trace_id,
+                                name="Max Iterations Reached",
+                                metadata={"max_iterations": MAX_MESSAGE_ITERATIONS},
+                                level="WARNING"
+                            )
+                        summary = _build_conversation_summary(iteration, f"⚠️ Maximum iteration limit reached ({MAX_MESSAGE_ITERATIONS})")
+                        trace_context.update_output({
+                            "completion_reason": "max_iterations",
+                            "iterations": iteration
+                        })
+                        return dtypes.Markdown(body=summary)
+
+                    # Success - exit retry loop (this should be unreachable now)
+                    break
+
+                except ray.exceptions.RayActorError as e:
+                    # Actor crashed
+                    retry_count += 1
+                    if trace_context.trace_id:
+                        create_event(
+                            trace_id=trace_context.trace_id,
+                            name="Actor Crash",
+                            metadata={"retry_count": retry_count, "max_retries": max_retries},
+                            level="ERROR"
+                        )
+                    if retry_count <= max_retries:
+                        await tracer.markdown(
+                            f"\n⚠️ **Session crashed. Retrying ({retry_count}/{max_retries})...**\n"
+                        )
+                        # Kill crashed actor (new one created in next iteration)
+                        try:
+                            await cleanup_actor(execution_id)
+                        except:
+                            pass
+                    else:
+                        summary = _build_conversation_summary(0, "❌ Session failed after retries")
+                        trace_context.update_output({
+                            "completion_reason": "actor_crash",
+                            "retry_count": retry_count
+                        })
+                        return dtypes.Markdown(body=summary)
+
+                # If we reach here, conversation loop exited normally
+                # This should not happen with current logic but handle it gracefully
+                summary = _build_conversation_summary(iteration, "✓ Conversation completed")
+                trace_context.update_output({
+                    "completion_reason": "normal_exit",
+                    "iterations": iteration
+                })
+                return dtypes.Markdown(body=summary)
+
+        except Exception as e:
+            # Handle any errors with proper completion
+            if trace_context.trace_id:
+                create_event(
+                    trace_id=trace_context.trace_id,
+                    name="Conversation Error",
+                    output_data={"error": str(e)[:200]},
+                    level="ERROR"
+                )
+            summary = _build_conversation_summary(0, f"❌ Error: {str(e)[:100]}")
+            trace_context.update_output({
+                "completion_reason": "error",
+                "error": str(e)[:200]
+            })
+            return dtypes.Markdown(body=summary)
+
+        finally:
+            # Always cleanup actor
+            await cleanup_actor(execution_id)
 
 
 async def _display_context_messages(tracer: Tracer, context_messages: list):
