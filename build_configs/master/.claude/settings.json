@@ -8,7 +8,8 @@
     }
   },
   "enabledPlugins": {
-    "master-core@cc-marketplace-agents": true
+    "general@cc-marketplace-agents": true,
+    "page-identifier@cc-marketplace-agents": true
   },
   "permissions": {
     "allow": [

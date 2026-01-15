@@ -87,6 +87,8 @@ jobs:
           fi
 
       - name: Fetch missing plugins from marketplaces
+        env:
+          MARKETPLACE_PAT: ${{ secrets.MARKETPLACE_PAT }}
         run: |
           # Read settings.json files for marketplace and plugin info
           MASTER_SETTINGS="build_configs/master/.claude/settings.json"
@@ -128,7 +130,11 @@ jobs:
 
             case "$source_type" in
               "github")
-                CLONE_URL="https://github.com/${source_value}.git"
+                if [ -n "$MARKETPLACE_PAT" ]; then
+                  CLONE_URL="https://${MARKETPLACE_PAT}@github.com/${source_value}.git"
+                else
+                  CLONE_URL="https://github.com/${source_value}.git"
+                fi
                 ;;
               "git")
                 CLONE_URL="$source_value"
@@ -139,10 +145,12 @@ jobs:
                 ;;
             esac
 
-            if git clone --depth 1 "$CLONE_URL" "$TEMP_DIR/$name" 2>/dev/null; then
-              echo "Cloned $name"
+            if git clone --depth 1 "$CLONE_URL" "$TEMP_DIR/$name" 2>&1; then
+              echo "✓ Cloned $name"
             else
-              echo "Warning: Failed to clone $name from $CLONE_URL"
+              echo "✗ Failed to clone $name"
+              echo "  If this is a private repo, ensure MARKETPLACE_PAT secret is set"
+              echo "  with 'repo' scope access to: ${source_value}"
             fi
           done
 
