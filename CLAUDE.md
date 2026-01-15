@@ -254,6 +254,147 @@ just start    # Start Ray + Kodosumi + deploy
 just stop     # Stop all services
 ```
 
+### systemd Service Management
+
+Services in the VM are managed via systemd (see `docs/DEV_ENVIRONMENT_BLUEPRINT.md`):
+
+| Service | Purpose |
+|---------|---------|
+| `kodosumi-ray` | Ray Head Node (:6379, :8265) |
+| `kodosumi-koco-spool` | Kodosumi Spooler |
+| `kodosumi-koco-serve` | Kodosumi Admin Panel (:3370) |
+
+**Start/Stop Services:**
+```bash
+# Start all (in order!)
+orb -m ray-cluster bash -c "sudo systemctl start kodosumi-ray"
+sleep 5  # Wait for Ray to be ready
+orb -m ray-cluster bash -c "sudo -u kodosumi bash -c 'cd /home/kodosumi/dev/cc-hitl-template && source .venv/bin/activate && serve deploy data/config/all_apps.yaml'"
+orb -m ray-cluster bash -c "sudo systemctl start kodosumi-koco-spool kodosumi-koco-serve"
+
+# Stop all
+orb -m ray-cluster bash -c "sudo systemctl stop kodosumi-koco-serve kodosumi-koco-spool kodosumi-ray"
+
+# Check status
+orb -m ray-cluster bash -c "sudo systemctl status kodosumi-ray kodosumi-koco-spool kodosumi-koco-serve --no-pager | grep -E '(●|Active)'"
+```
+
+**View Logs:**
+```bash
+orb -m ray-cluster bash -c "sudo journalctl -u kodosumi-ray -n 50 --no-pager"
+orb -m ray-cluster bash -c "sudo journalctl -u kodosumi-koco-serve -n 50 --no-pager"
+```
+
+**Clean Restart (fixes /tmp/ray permission issues):**
+```bash
+orb -m ray-cluster bash -c "sudo systemctl stop kodosumi-koco-serve kodosumi-koco-spool kodosumi-ray"
+orb -m ray-cluster bash -c "sudo rm -rf /tmp/ray"
+orb -m ray-cluster bash -c "sudo systemctl start kodosumi-ray"
+# ... then deploy and start koco services
+```
+
+### Kodosumi Expose API
+
+The Expose API configures application runtime environment without rebuilding containers.
+
+**API Documentation:** http://localhost:3370/schema/swagger#
+
+**Login (get JWT token):**
+```bash
+# Login returns KODOSUMI_API_KEY (JWT token)
+curl -X GET "http://localhost:3370/login?name=admin&password=admin" \
+  -H "accept: application/json"
+
+# Response: {"name":"admin","id":"...","KODOSUMI_API_KEY":"eyJ..."}
+
+# For subsequent requests, use cookie-based auth:
+curl -c /tmp/k.txt "http://localhost:3370/login?name=admin&password=admin"
+```
+
+**List All Exposes:**
+```bash
+curl -s -b /tmp/k.txt "http://localhost:3370/expose"
+```
+
+**Get Single Expose Config:**
+```bash
+curl -s -b /tmp/k.txt "http://localhost:3370/expose/<app-name>"
+```
+
+**Update Expose Config (via Admin UI):**
+```bash
+# Edit via web UI: http://localhost:3370/admin/expose/edit/<app-name>
+# Or use PUT endpoint:
+curl -s -b /tmp/k.txt -X PUT "http://localhost:3370/expose/<app-name>" \
+  -H "Content-Type: application/json" \
+  -d '{"bootstrap": "import_path: ...\nruntime_env:\n  env_vars:\n    CONTAINER_IMAGE_URI: \"ghcr.io/user/image:v1.0.6\"\n    ..."}'
+```
+
+**Boot All Applications:**
+```bash
+curl -s -b /tmp/k.txt -X POST "http://localhost:3370/boot"
+```
+
+**Check Expose Health:**
+```bash
+curl -s -b /tmp/k.txt "http://localhost:3370/expose/health"
+```
+
+**Register Routes (after boot):**
+```bash
+# Routes must be registered from the correct Ray Serve port
+# Port is configured in data/config/all_apps.yaml under http_options.port
+curl -s -b /tmp/k.txt -X POST "http://localhost:3370/flow/register" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "http://localhost:8001/-/routes"}'
+```
+
+### Ray Serve Port Configuration
+
+**IMPORTANT**: Ray Serve port must match between config and registration!
+
+The Ray Serve HTTP port is configured in `data/config/all_apps.yaml`:
+```yaml
+http_options:
+  host: 0.0.0.0
+  port: 8001  # <-- Ray Serve listens here
+```
+
+**Port mapping:**
+| Port | Service | Purpose |
+|------|---------|---------|
+| 3370 | Kodosumi Admin | HITL Admin Panel, Expose API |
+| 6379 | Ray GCS | Ray cluster coordination |
+| 8001 | Ray Serve | Deployed applications (routes) |
+| 8265 | Ray Dashboard | Cluster monitoring |
+
+**Verify routes are available:**
+```bash
+# From VM
+orb -m ray-cluster bash -c "curl -s http://localhost:8001/-/routes"
+# Expected: {"/azure-test":"azure-test","/claude":"claude",...}
+```
+
+**Common issue**: Boot registration fails with "Connection error"
+- Cause: `koco serve --register` points to wrong port (8000 or 8005)
+- Fix: Manually register routes after boot:
+  ```bash
+  curl -s -b /tmp/k.txt -X POST "http://localhost:3370/flow/register" \
+    -H "Content-Type: application/json" \
+    -d '{"url": "http://localhost:8001/-/routes"}'
+  ```
+
+**Alternative: Direct YAML Config**
+Edit `data/config/all_apps.yaml` or `data/config/claude_hitl_template.yaml` and redeploy:
+```bash
+orb -m ray-cluster bash -c "sudo -u kodosumi bash -c 'cd /home/kodosumi/dev/cc-hitl-template && source .venv/bin/activate && serve deploy data/config/all_apps.yaml'"
+```
+
+**IMPORTANT**: After syncing code changes to VM, always fix permissions:
+```bash
+orb -m ray-cluster bash -c "sudo chown -R kodosumi:kodosumi /home/kodosumi/dev/cc-hitl-template"
+```
+
 ---
 
 ## Architecture Patterns
@@ -662,6 +803,18 @@ See: [User Namespace Configuration](docs/TROUBLESHOOTING.md#user-namespace-confi
 - Check GITHUB_TOKEN in .env
 - Verify Docker/Podman running
 - See: [Build Issues](docs/TROUBLESHOOTING.md#build-issues)
+
+**Azure Foundry 403 Forbidden**:
+- **VPN Required!** Azure Foundry API requires corporate VPN connection
+- Error: `API Error: 403 Forbidden · Please run /login`
+- Debug: Test API directly:
+  ```bash
+  curl -X POST "https://claude-sweden-gateway.azure-api.net/claude-sweden/anthropic/v1/messages" \
+    -H "api-key: YOUR_API_KEY" -H "anthropic-version: 2023-06-01" \
+    -d '{"model": "claude-sonnet-4-5", "max_tokens": 10, "messages": [{"role": "user", "content": "hi"}]}'
+  ```
+- If 403: Connect to VPN and retry
+- If still 403: API key may be expired - check Azure portal
 
 **CRITICAL - VM Directory Structure**:
 - **NEVER** sync macOS `.venv` to VM - it has wrong architecture binaries

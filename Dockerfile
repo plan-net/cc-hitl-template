@@ -33,7 +33,7 @@
 # All owned by ray:users for proper permissions
 # HOME=/app/template_user so SDK "user" settings resolve to master config
 
-FROM rayproject/ray:2.51.1-py312
+FROM docker.io/rayproject/ray:2.51.1-py312
 
 # Switch to root for installation
 USER root
@@ -109,6 +109,10 @@ COPY build_configs/plugins /app/plugins
 # Copy dependency manifest for runtime awareness
 # Agents can read this to see what packages are available
 COPY build_configs/.dependency-manifest.json /app/.dependency-manifest.json
+
+# Copy image info (version, git commit, build timestamp)
+# Created by build-container.sh before build
+COPY .image-info.json /app/.image-info.json
 
 # Copy application code
 COPY claude_hitl_template /app/claude_hitl_template

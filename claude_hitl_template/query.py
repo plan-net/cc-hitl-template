@@ -319,9 +319,21 @@ async def run_conversation(inputs: dict, tracer: Tracer):
         else:
             digest_display = digest or "unknown"
 
+        # Build container info display
+        tag_display = f"\n**Tag:** `{image_config.get('tag', '')}`" if image_config.get('tag') else ""
+        version_display = f"\n**Version:** `{image_config.get('version', '')}`" if image_config.get('version') else ""
+
+        git_commit = image_config.get('git_commit', '')
+        git_branch = image_config.get('git_branch', '')
+        git_dirty = image_config.get('git_dirty', False)
+        dirty_marker = " (dirty)" if git_dirty else ""
+        git_display = f"\n**Git:** `{git_commit}` ({git_branch}){dirty_marker}" if git_commit else ""
+
+        build_display = f"\n**Built:** `{image_config.get('build_timestamp', '')}`" if image_config.get('build_timestamp') else ""
+
         init_message += f"""### Container Image Configuration
-**Registry Path:** `{image_config["registry_path"]}`
-**Digest:** `{digest_display}` (SHA256)
+**Registry Path:** `{image_config["registry_path"]}`{tag_display}
+**Digest:** `{digest_display}` (SHA256){version_display}{git_display}{build_display}
 
 This conversation will run in a containerized Ray Actor with baked `.claude` configurations.
 
@@ -551,13 +563,36 @@ def _format_metadata(metadata: dict) -> str:
         lines.append("### Container Image")
         lines.append(f"**Registry Path:** `{container.get('registry_path', 'unknown')}`")
 
+        # Show tag if available
+        tag = container.get('tag', '')
+        if tag:
+            lines.append(f"**Tag:** `{tag}`")
+
         # Truncate digest for readability
         digest = container.get('digest', '')
         if digest and len(digest) > 25:
             digest_display = f"{digest[:19]}...{digest[-6:]}"
         else:
             digest_display = digest or "unknown"
-        lines.append(f"**Digest:** `{digest_display}` (SHA256)\n")
+        lines.append(f"**Digest:** `{digest_display}` (SHA256)")
+
+        # Show version and git info
+        version = container.get('version', '')
+        if version:
+            lines.append(f"**Version:** `{version}`")
+
+        git_commit = container.get('git_commit', '')
+        git_branch = container.get('git_branch', '')
+        git_dirty = container.get('git_dirty', False)
+        if git_commit:
+            dirty_marker = " (dirty)" if git_dirty else ""
+            lines.append(f"**Git:** `{git_commit}` ({git_branch}){dirty_marker}")
+
+        build_timestamp = container.get('build_timestamp', '')
+        if build_timestamp:
+            lines.append(f"**Built:** `{build_timestamp}`")
+
+        lines.append("")  # Empty line after container section
 
     # Resource Allocation
     resources = metadata.get("resources", {})

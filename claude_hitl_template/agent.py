@@ -35,14 +35,21 @@ logger = logging.getLogger(__name__)
 
 def get_container_image_config() -> dict:
     """
-    Get container image configuration from environment.
+    Get container image configuration from environment and baked metadata.
+
+    Reads from:
+    1. CONTAINER_IMAGE_URI env var (runtime config)
+    2. /app/.image-info.json (baked at build time)
 
     Returns:
         {
-            "uri": "ghcr.io/user/image@sha256:...",  # Full URI with digest
-            "registry_path": "ghcr.io/user/image",     # Without digest
-            "digest": "sha256:...",                     # Just the digest
-            "use_container": bool                       # Whether to use containers
+            "uri": "ghcr.io/user/image:v1.0.1",      # Full URI
+            "registry_path": "ghcr.io/user/image",   # Without tag/digest
+            "tag": "v1.0.1",                         # Version tag
+            "digest": "sha256:...",                  # Image digest (if available)
+            "version": "1.0.1",                      # Semantic version
+            "build_timestamp": "2026-01-14T...",    # When image was built
+            "use_container": bool                    # Whether to use containers
         }
     """
     image_uri = os.getenv("CONTAINER_IMAGE_URI", "")
@@ -50,18 +57,57 @@ def get_container_image_config() -> dict:
     # Container mode is enabled if image URI is configured
     use_container = bool(image_uri)
 
-    # Parse digest from URI if present (format: image@sha256:...)
+    # Parse tag/digest from URI
     registry_path = ""
+    tag = ""
     digest = ""
     if image_uri and "@" in image_uri:
+        # Format: image@sha256:...
         registry_path, digest = image_uri.split("@", 1)
+    elif image_uri and ":" in image_uri:
+        # Format: image:tag
+        parts = image_uri.rsplit(":", 1)
+        registry_path = parts[0]
+        tag = parts[1] if len(parts) > 1 else ""
     elif image_uri:
         registry_path = image_uri
+
+    # Read baked image info if available (created at build time)
+    version = ""
+    build_timestamp = ""
+    git_commit = ""
+    git_branch = ""
+    git_dirty = False
+    image_info_path = Path("/app/.image-info.json")
+    if image_info_path.exists():
+        try:
+            info = json.loads(image_info_path.read_text())
+            version = info.get("version", "")
+            build_timestamp = info.get("build_timestamp", "")
+            # Use baked digest if not in URI
+            if not digest:
+                digest = info.get("digest", "")
+            # Use baked tag if not in URI
+            if not tag:
+                tag = info.get("tag", "")
+            # Git info for debugging
+            git_info = info.get("git", {})
+            git_commit = git_info.get("commit", "")
+            git_branch = git_info.get("branch", "")
+            git_dirty = git_info.get("dirty", False)
+        except Exception as e:
+            logger.warning(f"Failed to read image info from {image_info_path}: {e}")
 
     return {
         "uri": image_uri,
         "registry_path": registry_path,
+        "tag": tag,
         "digest": digest,
+        "version": version,
+        "build_timestamp": build_timestamp,
+        "git_commit": git_commit,
+        "git_branch": git_branch,
+        "git_dirty": git_dirty,
         "use_container": use_container
     }
 
@@ -186,9 +232,10 @@ class ClaudeSessionActor:
         # In container, HOME is set to /app/template_user by Dockerfile ENV
         is_containerized = os.getenv("HOME") == "/app/template_user"
 
-        # Store resource allocation (matches create_actor() settings)
-        self.num_cpus = 1
-        self.memory_bytes = 1024 * 1024 * 1024  # 1GB
+        # Store resource allocation (read from env vars, matching create_actor())
+        self.num_cpus = int(os.getenv("CLAUDE_ACTOR_CPUS", "1"))
+        memory_gb = float(os.getenv("CLAUDE_ACTOR_MEMORY_GB", "1"))
+        self.memory_bytes = int(memory_gb * 1024 * 1024 * 1024)
 
         # Load plugins from settings.json
         plugin_specs = []
@@ -559,8 +606,26 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
     - Named: "claude-session-{execution_id}" for retrieval
     - Detached lifetime: Survives driver crashes
     - No auto-restart: Subprocess can't be recovered
-    - Resource allocation: 1 CPU, 1GB memory
+    - Configurable resource allocation (CPU, memory)
     - Optional: Container runtime for .claude/ folder isolation
+    - Supports both Public Anthropic API and Azure Foundry
+
+    Environment Variables:
+        CLAUDE_USE_AZURE_FOUNDRY: "1" for Azure, "0" for Public API (default: "0")
+
+        # Public API
+        ANTHROPIC_API_KEY: API Key for Public API
+
+        # Azure Foundry
+        ANTHROPIC_FOUNDRY_BASE_URL: Azure Foundry URL
+        ANTHROPIC_FOUNDRY_API_KEY: Azure API Key (without "api-key: " prefix)
+
+        # Model Selection
+        CLAUDE_MODEL: Model tier to use: "opus", "sonnet" (default: "sonnet")
+
+        # Resources
+        CLAUDE_ACTOR_CPUS: CPU allocation (default: 1)
+        CLAUDE_ACTOR_MEMORY_GB: Memory in GB (default: 1)
 
     Args:
         execution_id: Unique identifier for this conversation
@@ -586,6 +651,68 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
     if use_container is None:
         use_container = image_config["use_container"]
 
+    # Resource Configuration
+    num_cpus = int(os.getenv("CLAUDE_ACTOR_CPUS", "1"))
+    memory_gb = float(os.getenv("CLAUDE_ACTOR_MEMORY_GB", "1"))
+    memory_bytes = int(memory_gb * 1024 * 1024 * 1024)
+
+    # Model Configuration
+    # Maps tier names to actual model identifiers for each API provider
+    MODEL_MAPPING = {
+        "opus": {
+            "public": "claude-opus-4-20250514",
+            "azure": "claude-opus-4-5"
+        },
+        "sonnet": {
+            "public": "claude-sonnet-4-20250514",
+            "azure": "claude-sonnet-4-5"
+        },
+        # Haiku support commented out for now
+        # "haiku": {
+        #     "public": "claude-haiku-3-20240307",
+        #     "azure": "claude-haiku-3-5"
+        # }
+    }
+
+    model_tier = os.getenv("CLAUDE_MODEL", "sonnet").lower()
+    if model_tier not in MODEL_MAPPING:
+        logger.warning(f"Unknown model tier '{model_tier}', falling back to 'sonnet'")
+        model_tier = "sonnet"
+
+    # API Provider Toggle
+    use_azure = os.getenv("CLAUDE_USE_AZURE_FOUNDRY", "0") == "1"
+
+    if use_azure:
+        # Azure Foundry Configuration
+        azure_api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY", "")
+
+        api_env_vars = {
+            "CLAUDE_CODE_USE_FOUNDRY": "1",
+            "ANTHROPIC_FOUNDRY_BASE_URL": os.getenv(
+                "ANTHROPIC_FOUNDRY_BASE_URL",
+                "https://claude-sweden-gateway.azure-api.net/claude-sweden/anthropic"
+            ),
+            "ANTHROPIC_FOUNDRY_API_KEY": azure_api_key,
+            "ANTHROPIC_CUSTOM_HEADERS": f"api-key: {azure_api_key}",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": MODEL_MAPPING["opus"]["azure"],
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": MODEL_MAPPING["sonnet"]["azure"],
+            # "ANTHROPIC_DEFAULT_HAIKU_MODEL": MODEL_MAPPING["haiku"]["azure"],
+        }
+        model_name = MODEL_MAPPING[model_tier]["azure"]
+        logger.info(f"Using Azure Foundry API with model: {model_name}")
+    else:
+        # Public Anthropic API Configuration
+        api_env_vars = {
+            "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
+        }
+        model_name = MODEL_MAPPING[model_tier]["public"]
+        logger.info(f"Using Public Anthropic API with model: {model_name}")
+
+    # Add selected model to env
+    api_env_vars["CLAUDE_MODEL"] = model_name
+
+    logger.info(f"Actor resources: {num_cpus} CPUs, {memory_gb}GB RAM")
+
     # Build runtime environment
     if use_container:
         # Container isolation for .claude/ folders:
@@ -596,11 +723,11 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
         # Image URI must include digest for immutable reference:
         # Format: ghcr.io/<username>/claude-hitl-worker@sha256:<digest>
         runtime_env = RuntimeEnv(
-            image_uri=image_config["uri"],  # Full URI with digest from CONTAINER_IMAGE_URI env var
+            image_uri=image_config["uri"],
             env_vars={
-                "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
-                "CONTAINER_IMAGE_URI": image_config["uri"],      # Pass to actor for logging
-                "CONTAINER_IMAGE_DIGEST": image_config["digest"], # Pass digest for validation
+                **api_env_vars,
+                "CONTAINER_IMAGE_URI": image_config["uri"],
+                "CONTAINER_IMAGE_DIGEST": image_config["digest"],
                 # HOME is set to /app/template_user in Dockerfile
                 # This makes "user" settings load from master config .claude/
             }
@@ -608,8 +735,8 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
         # Ray will deploy code to container, actor runs in that context
         actor_cwd = None  # Let Ray handle cwd
     else:
-        # Native execution (no container)
-        runtime_env = None
+        # Native execution (with env vars for API configuration)
+        runtime_env = RuntimeEnv(env_vars=api_env_vars)
         actor_cwd = project_root
 
     return ClaudeSessionActor.options(
@@ -617,8 +744,8 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
         runtime_env=runtime_env,
         lifetime="detached",       # Survives driver crashes
         max_restarts=0,             # Don't auto-restart (subprocess can't recover)
-        num_cpus=1,                 # 1 CPU for actor + subprocess
-        memory=1024 * 1024 * 1024   # 1GB (recommended by Claude SDK docs)
+        num_cpus=num_cpus,
+        memory=memory_bytes
     ).remote(cwd=actor_cwd)
 
 

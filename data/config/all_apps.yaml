@@ -1,0 +1,57 @@
+# Combined deployment configuration for all applications
+# Deploy with: serve deploy data/config/all_apps.yaml
+
+# Global proxy and logging settings
+proxy_location: EveryNode
+http_options:
+  host: 0.0.0.0
+  port: 8001
+grpc_options:
+  port: 9001
+  grpc_servicer_functions: []
+logging_config:
+  encoding: TEXT
+  log_level: DEBUG
+  logs_dir: null
+  enable_access_log: true
+
+# Applications
+applications:
+  # Main Customer Journey Agent
+  - name: customer_journey_agent
+    route_prefix: /customer-journey
+    import_path: customer_journey_agent.query:fast_app
+    runtime_env:
+      env_vars:
+        CONTAINER_IMAGE_URI: ""
+        ANTHROPIC_API_KEY: ""  # Set via .env or Expose API
+        BRAVE_API_KEY: ""  # Set via .env or Expose API
+        MCP_GVI_ENDPOINT: ""
+        MCP_STATISTA_ENDPOINT: ""  # Set via .env or Expose API
+        MCP_EXTENDED_PROFILE_ENDPOINT: ""
+        SOKOSUMI_API_KEY: ""  # Set via .env or Expose API
+        GWI_API_KEY: ""  # Set via .env or Expose API
+        STATISTA_API_KEY: ""  # Set via .env or Expose API
+    deployments:
+      - name: CustomerJourneyService
+        num_replicas: 1
+        max_concurrent_queries: 10
+
+  # Claude HITL Template (Feeling Check Agent)
+  - name: claude_hitl_template
+    route_prefix: /feeling-check
+    import_path: claude_hitl_template.query:fast_app
+    runtime_env:
+      env_vars:
+        CONTAINER_IMAGE_URI: "ghcr.io/basteiz/claude-hitl-worker:v1.0.6"
+        # Azure Foundry Configuration
+        CLAUDE_USE_AZURE_FOUNDRY: "1"
+        ANTHROPIC_FOUNDRY_BASE_URL: "https://claude-sweden-gateway.azure-api.net/claude-sweden/anthropic"
+        ANTHROPIC_FOUNDRY_API_KEY: ""  # Set via .env or Expose API
+        CLAUDE_MODEL: "sonnet"
+        CLAUDE_ACTOR_CPUS: "1"
+        CLAUDE_ACTOR_MEMORY_GB: "2"
+    deployments:
+      - name: ClaudeHitlTemplate
+        num_replicas: 1
+        max_concurrent_queries: 10

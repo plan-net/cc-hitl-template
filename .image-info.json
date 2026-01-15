@@ -1,0 +1,14 @@
+{
+    "version": "1.0.6",
+    "tag": "v1.0.6",
+    "build_timestamp": "2026-01-14T16:35:29Z",
+    "github_username": "basteiz",
+    "image_name": "ghcr.io/basteiz/claude-hitl-worker",
+    "digest": "",
+    "git": {
+        "commit": "012ab20",
+        "commit_full": "012ab207c16648292715e9d22dfa9b5e085356db",
+        "branch": "main",
+        "dirty": true
+    }
+}
