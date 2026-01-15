@@ -1,0 +1,4 @@
+# System packages (APT) for Claude HITL Worker container
+# Add packages here that should be installed via apt-get
+# Example: chromium
+

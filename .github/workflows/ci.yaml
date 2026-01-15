@@ -1,0 +1,279 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, mkr-testing]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/claude-hitl-worker
+
+jobs:
+  # Job 1: Parse commit message and determine if deploy is needed
+  parse-commit:
+    runs-on: ubuntu-latest
+    outputs:
+      should-deploy: ${{ steps.parse.outputs.should-deploy }}
+      deploy-tag: ${{ steps.parse.outputs.deploy-tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse commit message for deploy tag
+        id: parse
+        run: |
+          # Get the commit message
+          COMMIT_MSG=$(git log -1 --format='%s')
+          echo "Commit message: $COMMIT_MSG"
+
+          # Check for [cc-deploy] <tag> format
+          if echo "$COMMIT_MSG" | grep -qE '^\[cc-deploy\] .+'; then
+            # Extract the tag (everything after "[cc-deploy] ")
+            DEPLOY_TAG=$(echo "$COMMIT_MSG" | sed 's/^\[cc-deploy\] //')
+            echo "Deploy tag found: $DEPLOY_TAG"
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+            echo "deploy-tag=$DEPLOY_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Commit message must start with [cc-deploy] <tag-name>"
+            echo "Example: [cc-deploy] version2.2.0"
+            exit 1
+          fi
+
+  # Job 2: Build and push Docker image
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: parse-commit
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-digest: ${{ steps.build-push.outputs.digest }}
+      image-uri: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate build_configs exists
+        run: |
+          if [ ! -d "build_configs" ]; then
+            echo "Error: build_configs directory not found"
+            echo "This repository requires self-contained build configuration"
+            exit 1
+          fi
+
+          # Verify required directories exist
+          REQUIRED_DIRS=(
+            "build_configs/master/.claude"
+            "build_configs/project/.claude"
+            "build_configs/dependencies"
+          )
+
+          for dir in "${REQUIRED_DIRS[@]}"; do
+            if [ ! -d "$dir" ]; then
+              echo "Error: Required directory $dir not found"
+              exit 1
+            fi
+          done
+
+          # Create empty dependency files if they don't exist
+          touch build_configs/dependencies/requirements.txt
+          touch build_configs/dependencies/system-packages.txt
+          if [ ! -f "build_configs/dependencies/package.json" ]; then
+            echo '{"name":"runtime","version":"1.0.0","dependencies":{}}' > build_configs/dependencies/package.json
+          fi
+
+      - name: Fetch missing plugins from marketplaces
+        run: |
+          # Read settings.json files for marketplace and plugin info
+          MASTER_SETTINGS="build_configs/master/.claude/settings.json"
+          PROJECT_SETTINGS="build_configs/project/.claude/settings.json"
+
+          # Check if jq is available
+          if ! command -v jq &> /dev/null; then
+            echo "jq not found, skipping plugin fetching"
+            exit 0
+          fi
+
+          # Create plugins directory if it doesn't exist
+          mkdir -p build_configs/plugins
+
+          # Extract marketplace configurations (merge master and project)
+          MARKETPLACES=""
+          if [ -f "$MASTER_SETTINGS" ]; then
+            MARKETPLACES=$(jq -r '.extraKnownMarketplaces // {} | to_entries[] | "\(.key) \(.value.source.source) \(.value.source.repo // .value.source.url)"' "$MASTER_SETTINGS" 2>/dev/null || echo "")
+          fi
+          if [ -f "$PROJECT_SETTINGS" ]; then
+            PROJECT_MKT=$(jq -r '.extraKnownMarketplaces // {} | to_entries[] | "\(.key) \(.value.source.source) \(.value.source.repo // .value.source.url)"' "$PROJECT_SETTINGS" 2>/dev/null || echo "")
+            MARKETPLACES="$MARKETPLACES
+          $PROJECT_MKT"
+          fi
+
+          if [ -z "$MARKETPLACES" ]; then
+            echo "No marketplaces configured, skipping plugin fetching"
+            exit 0
+          fi
+
+          # Clone marketplaces to temp directory
+          TEMP_DIR=$(mktemp -d)
+          echo "Cloning marketplaces to $TEMP_DIR..."
+
+          echo "$MARKETPLACES" | sort -u | while read -r name source_type source_value; do
+            if [ -z "$name" ]; then continue; fi
+
+            echo "Processing marketplace: $name ($source_type)"
+
+            case "$source_type" in
+              "github")
+                CLONE_URL="https://github.com/${source_value}.git"
+                ;;
+              "git")
+                CLONE_URL="$source_value"
+                ;;
+              *)
+                echo "Unknown source type: $source_type, skipping"
+                continue
+                ;;
+            esac
+
+            if git clone --depth 1 "$CLONE_URL" "$TEMP_DIR/$name" 2>/dev/null; then
+              echo "Cloned $name"
+            else
+              echo "Warning: Failed to clone $name from $CLONE_URL"
+            fi
+          done
+
+          # Extract enabled plugins (merge master and project)
+          ENABLED_PLUGINS=""
+          if [ -f "$MASTER_SETTINGS" ]; then
+            ENABLED_PLUGINS=$(jq -r '.enabledPlugins // {} | to_entries[] | select(.value == true) | .key' "$MASTER_SETTINGS" 2>/dev/null || echo "")
+          fi
+          if [ -f "$PROJECT_SETTINGS" ]; then
+            PROJECT_PLUGINS=$(jq -r '.enabledPlugins // {} | to_entries[] | select(.value == true) | .key' "$PROJECT_SETTINGS" 2>/dev/null || echo "")
+            ENABLED_PLUGINS="$ENABLED_PLUGINS
+          $PROJECT_PLUGINS"
+          fi
+
+          # Copy enabled plugins (skip if already vendored)
+          echo "$ENABLED_PLUGINS" | sort -u | while read -r plugin_spec; do
+            if [ -z "$plugin_spec" ]; then continue; fi
+
+            # Parse plugin@marketplace format
+            plugin_name="${plugin_spec%%@*}"
+            marketplace_name="${plugin_spec##*@}"
+
+            # Check if already vendored
+            if [ -d "build_configs/plugins/$marketplace_name/plugins/$plugin_name" ]; then
+              echo "Plugin $plugin_spec already vendored, skipping"
+              continue
+            fi
+
+            # Copy from cloned marketplace
+            source_path="$TEMP_DIR/$marketplace_name/plugins/$plugin_name"
+            if [ -d "$source_path" ]; then
+              dest_path="build_configs/plugins/$marketplace_name/plugins/$plugin_name"
+              mkdir -p "$(dirname "$dest_path")"
+              cp -r "$source_path" "$dest_path"
+              echo "Copied plugin: $plugin_spec"
+            else
+              echo "Warning: Plugin $plugin_spec not found in marketplace"
+            fi
+          done
+
+          # Cleanup
+          rm -rf "$TEMP_DIR"
+
+      - name: Generate dependency manifest
+        run: |
+          cat > build_configs/.dependency-manifest.json <<EOF
+          {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "source": "GitHub Actions CI",
+            "git_sha": "${{ github.sha }}",
+            "git_ref": "${{ github.ref_name }}",
+            "python_packages": $(cat build_configs/dependencies/requirements.txt 2>/dev/null | grep -v '^#' | grep -v '^$' | jq -R -s -c 'split("\n") | map(select(length > 0))' || echo '[]'),
+            "nodejs_packages": $(jq -c '.dependencies | keys' build_configs/dependencies/package.json 2>/dev/null || echo '[]'),
+            "system_packages": $(cat build_configs/dependencies/system-packages.txt 2>/dev/null | grep -v '^#' | grep -v '^$' | jq -R -s -c 'split("\n") | map(select(length > 0))' || echo '[]')
+          }
+          EOF
+          echo "Generated dependency manifest:"
+          cat build_configs/.dependency-manifest.json
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ needs.parse-commit.outputs.deploy-tag }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            MASTER_CONFIG_PATH=build_configs/master/.claude
+            PROJECT_CONFIG_PATH=build_configs/project/.claude
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output deployment info
+        run: |
+          DEPLOY_TAG="${{ needs.parse-commit.outputs.deploy-tag }}"
+          FULL_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}"
+          TAGGED_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DEPLOY_TAG}"
+          PY_MODULES_URL="https://github.com/${{ github.repository }}/archive/${{ github.sha }}.zip"
+
+          echo "## Deployment Ready: ${DEPLOY_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${DEPLOY_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Tagged URI:** \`${TAGGED_URI}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Digest URI:** \`${FULL_URI}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### For Kodosumi Expose Bootstrap Config:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**py_modules URL:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${PY_MODULES_URL}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**CONTAINER_IMAGE_URI (use digest for immutability):**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${FULL_URI}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Full Bootstrap YAML:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
+          echo "import_path: claude_hitl_template.query:fast_app" >> $GITHUB_STEP_SUMMARY
+          echo "runtime_env:" >> $GITHUB_STEP_SUMMARY
+          echo "  py_modules:" >> $GITHUB_STEP_SUMMARY
+          echo "    - ${PY_MODULES_URL}" >> $GITHUB_STEP_SUMMARY
+          echo "  env_vars:" >> $GITHUB_STEP_SUMMARY
+          echo "    CONTAINER_IMAGE_URI: \"${FULL_URI}\"" >> $GITHUB_STEP_SUMMARY
+          echo "    ANTHROPIC_API_KEY: \"<your-key>\"" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Deploy Tag:** \`${DEPLOY_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Git SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Digest:** \`${{ steps.build-push.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,4 @@
+# Python dependencies for Claude HITL Worker container
+# Add packages here that should be available to Claude agents at runtime
+# Example: beautifulsoup4>=4.12.0
+

@@ -10,7 +10,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-build_configs/
+# build_configs/ is now tracked for self-contained GitHub Actions builds
 .dependency-manifest.json
 
 # Testing
