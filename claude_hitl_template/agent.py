@@ -186,9 +186,10 @@ class ClaudeSessionActor:
         # In container, HOME is set to /app/template_user by Dockerfile ENV
         is_containerized = os.getenv("HOME") == "/app/template_user"
 
-        # Store resource allocation (matches create_actor() settings)
-        self.num_cpus = 1
-        self.memory_bytes = 1024 * 1024 * 1024  # 1GB
+        # Store resource allocation (read from env vars, set by Ray Serve config)
+        self.num_cpus = int(os.getenv("CLAUDE_ACTOR_CPUS", "1"))
+        memory_gb = float(os.getenv("CLAUDE_ACTOR_MEMORY_GB", "1"))
+        self.memory_bytes = int(memory_gb * 1024 * 1024 * 1024)
 
         # Load plugins from settings.json
         plugin_specs = []
@@ -559,8 +560,24 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
     - Named: "claude-session-{execution_id}" for retrieval
     - Detached lifetime: Survives driver crashes
     - No auto-restart: Subprocess can't be recovered
-    - Resource allocation: 1 CPU, 1GB memory
+    - Configurable resource allocation (CPU, memory)
     - Optional: Container runtime for .claude/ folder isolation
+    - Supports both Public Anthropic API and Azure Foundry
+
+    Environment Variables (passed through from Ray Serve runtime_env):
+        All ANTHROPIC_* and CLAUDE_* env vars are passed through to the
+        actor's container. These should be configured in the Ray Serve
+        deployment config (all_apps.yaml), not constructed here.
+
+        Common variables:
+        - CLAUDE_CODE_USE_FOUNDRY: "1" for Azure Foundry, unset for Public API
+        - ANTHROPIC_API_KEY: API Key for Public API
+        - ANTHROPIC_FOUNDRY_BASE_URL: Azure Foundry endpoint URL
+        - ANTHROPIC_FOUNDRY_API_KEY: Azure API Key
+
+        Resources:
+        - CLAUDE_ACTOR_CPUS: CPU allocation (default: 1)
+        - CLAUDE_ACTOR_MEMORY_GB: Memory in GB (default: 1)
 
     Args:
         execution_id: Unique identifier for this conversation
@@ -586,6 +603,28 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
     if use_container is None:
         use_container = image_config["use_container"]
 
+    # Resource Configuration (from Ray Serve runtime_env)
+    num_cpus = int(os.getenv("CLAUDE_ACTOR_CPUS", "1"))
+    memory_gb = float(os.getenv("CLAUDE_ACTOR_MEMORY_GB", "1"))
+    memory_bytes = int(memory_gb * 1024 * 1024 * 1024)
+
+    # Pass through env vars from current environment to actor container
+    # These are set by Ray Serve deployment config (all_apps.yaml runtime_env.env_vars)
+    # No transformation needed - just pass them to the actor's container
+    passthrough_env_vars = {
+        k: v for k, v in os.environ.items()
+        if k.startswith(("ANTHROPIC_", "CLAUDE_CODE_", "CLAUDE_MODEL", "CLAUDE_ACTOR_", "CONTAINER_IMAGE_"))
+    }
+
+    # Log configuration
+    use_azure = os.getenv("CLAUDE_CODE_USE_FOUNDRY", "0") == "1"
+    if use_azure:
+        logger.info("Using Azure Foundry API (CLAUDE_CODE_USE_FOUNDRY=1)")
+    else:
+        logger.info("Using Public Anthropic API")
+    logger.info(f"Passing through {len(passthrough_env_vars)} env vars to actor")
+    logger.info(f"Actor resources: {num_cpus} CPUs, {memory_gb}GB RAM")
+
     # Build runtime environment
     if use_container:
         # Container isolation for .claude/ folders:
@@ -596,20 +635,16 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
         # Image URI must include digest for immutable reference:
         # Format: ghcr.io/<username>/claude-hitl-worker@sha256:<digest>
         runtime_env = RuntimeEnv(
-            image_uri=image_config["uri"],  # Full URI with digest from CONTAINER_IMAGE_URI env var
-            env_vars={
-                "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
-                "CONTAINER_IMAGE_URI": image_config["uri"],      # Pass to actor for logging
-                "CONTAINER_IMAGE_DIGEST": image_config["digest"], # Pass digest for validation
-                # HOME is set to /app/template_user in Dockerfile
-                # This makes "user" settings load from master config .claude/
-            }
+            image_uri=image_config["uri"],
+            env_vars=passthrough_env_vars
+            # HOME is set to /app/template_user in Dockerfile
+            # This makes "user" settings load from master config .claude/
         )
         # Ray will deploy code to container, actor runs in that context
         actor_cwd = None  # Let Ray handle cwd
     else:
-        # Native execution (no container)
-        runtime_env = None
+        # Native execution (with env vars for API configuration)
+        runtime_env = RuntimeEnv(env_vars=passthrough_env_vars)
         actor_cwd = project_root
 
     return ClaudeSessionActor.options(
@@ -617,8 +652,8 @@ def create_actor(execution_id: str, cwd: Optional[str] = None, use_container: Op
         runtime_env=runtime_env,
         lifetime="detached",       # Survives driver crashes
         max_restarts=0,             # Don't auto-restart (subprocess can't recover)
-        num_cpus=1,                 # 1 CPU for actor + subprocess
-        memory=1024 * 1024 * 1024   # 1GB (recommended by Claude SDK docs)
+        num_cpus=num_cpus,
+        memory=memory_bytes
     ).remote(cwd=actor_cwd)
 
 
