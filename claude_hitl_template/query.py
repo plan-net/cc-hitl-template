@@ -144,8 +144,7 @@ prompt_form = F.Model(
     F.Markdown("""
     # Claude + Kodosumi HITL Template
 
-    This template demonstrates integrating **Claude Agent SDK** with **Kodosumi's Human-in-the-Loop (HITL)** functionality.
-
+    This is a test by markus and bastian.
     Enter a prompt below to start a conversation with Claude. The conversation will pause when Claude needs your input,
     and you can respond through Kodosumi's HITL interface.
 
