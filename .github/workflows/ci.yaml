@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop, mkr-testing]
+    branches: [main, develop, mkr-testing, testing_new_agent]
   pull_request:
     branches: [main, develop]
 
