@@ -16,7 +16,7 @@
   "enabledPlugins": {
     "general@cc-marketplace-developers": true,
     "claude-agent-sdk@cc-marketplace-developers": true,
-    "page-identifier@cc-marketplace-agents": true
+    "advanced-web-research@cc-marketplace-agents": true
   },
   "permissions": {
     "allow": [
